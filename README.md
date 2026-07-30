@@ -1,13 +1,13 @@
 # pi-kiro-connector
 
-A standalone [Pi](https://pi.dev) package that connects Pi directly to Kiro. It does not require Kiro-Go, a local proxy, or another gateway process.
+A [Pi](https://pi.dev) package that adds native Kiro Runtime access with model discovery, streaming, reasoning, images, and tools.
 
 [简体中文](README.zh-CN.md)
 
 ## Features
 
-- Registers an independent `kiro` provider without replacing Pi's built-in Anthropic provider
-- Calls the regional Kiro Runtime directly and decodes AWS EventStream responses
+- Provides a dedicated `kiro` provider for every compatible model returned by Kiro's model catalog
+- Calls the regional Kiro Runtime and decodes AWS EventStream responses
 - Supports streaming text, reasoning, images, Pi tools, tool results, and cancellation
 - Discovers models and token limits from Kiro's regional model catalog
 - Provides a built-in fallback catalog for offline startup
@@ -22,7 +22,7 @@ A standalone [Pi](https://pi.dev) package that connects Pi directly to Kiro. It 
 2. Pi 0.83.0 or newer
 3. A Kiro API key, typically beginning with `ksk_`
 
-Use only credentials and services you are authorized to access. This independent compatibility project is not an official Kiro client.
+Use only credentials and services you are authorized to access.
 
 ## Install
 
@@ -139,11 +139,11 @@ Pi caches a successfully discovered model catalog through its provider model sto
 
 ### Authentication fails
 
-Run `/login kiro` again or verify that `KIRO_API_KEY` is the Kiro account key—not an API key for a third-party gateway. `/kiro-status` reports HTTP 401 or 403 without displaying the credential.
+Run `/login kiro` again or verify that `KIRO_API_KEY` contains a valid Kiro API key. `/kiro-status` reports HTTP 401 or 403 without displaying the credential.
 
 ### The regional endpoint fails
 
-Verify `KIRO_REGION`. It must be a region label such as `us-east-1` or `eu-central-1`. Remove obsolete `KIRO_BASE_URL` settings; this standalone version does not use them.
+Verify `KIRO_REGION`. It must be a region label such as `us-east-1` or `eu-central-1`.
 
 ### Models are not refreshed
 
@@ -169,16 +169,12 @@ Validation runs TypeScript checks, protocol/unit tests, an offline Pi loading sm
 
 ## Security and privacy
 
-Requests contain the conversation context needed for inference and are sent directly to Kiro's regional services. No connector-operated relay is involved. See [SECURITY.md](SECURITY.md) for credential handling, reporting, and review guidance.
+Requests contain the conversation context needed for inference and are sent to Kiro's regional services. See [SECURITY.md](SECURITY.md) for credential handling, reporting, and review guidance.
 
-## License and attribution
+## License
 
-This project is licensed under [MIT](LICENSE). Protocol implementation research was informed by the MIT-licensed Kiro-Go project; its copyright and license notice are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Kiro-Go is not a runtime dependency.
+This project is licensed under [MIT](LICENSE).
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Disclaimer
-
-This independent project is not affiliated with, endorsed by, or sponsored by Amazon, AWS, Kiro, the Pi maintainers, or the Kiro-Go maintainers. Product names are used only to describe compatibility.

@@ -56,7 +56,7 @@ export function supportsReasoning(model: DiscoveredModel, id: string): boolean {
   if (typeof model.reasoning === "boolean") return model.reasoning;
   if (typeof model.supports_reasoning === "boolean") return model.supports_reasoning;
   // Native model-catalog responses may omit explicit reasoning metadata. Auto is a
-  // router alias; Claude models support the Anthropic thinking request shape.
+  // router alias; known Claude entries support Kiro's reasoning controls.
   return id !== "auto" && /^claude-/i.test(id);
 }
 

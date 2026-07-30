@@ -41,4 +41,4 @@ Do not commit generated tarballs, `node_modules`, `.env` files, Kiro credentials
 
 ## Protocol changes
 
-Protocol behavior must be covered by focused tests. AWS EventStream changes should test framing, CRC validation, chunk boundaries, malformed input, and cancellation where applicable. If implementation is copied or substantially adapted from another project, preserve all required license notices in `THIRD_PARTY_NOTICES.md`.
+Protocol behavior must be covered by focused tests. AWS EventStream changes should test framing, CRC validation, chunk boundaries, malformed input, and cancellation where applicable. Preserve all copyright and license notices required by contributed code.

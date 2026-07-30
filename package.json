@@ -1,7 +1,7 @@
 {
   "name": "pi-kiro-connector",
   "version": "0.1.0",
-  "description": "A standalone Pi extension that connects directly to Kiro Runtime.",
+  "description": "Native Kiro Runtime provider for Pi with model discovery, streaming, reasoning, and tools.",
   "type": "module",
   "license": "MIT",
   "author": "nihaoyaTnT",
@@ -27,7 +27,6 @@
     "README.md",
     "README.zh-CN.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "SECURITY.md"

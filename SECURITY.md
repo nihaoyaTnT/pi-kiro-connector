@@ -17,7 +17,7 @@ A key may use `ksk_...|region`; the connector separates the region before constr
 
 ## Network and data flow
 
-Inference requests are sent directly to `https://runtime.<region>.kiro.dev/`. Model discovery uses the regional CodeWhisperer model-catalog endpoint. Conversation messages, tool definitions, tool results, and images required for inference are transmitted to those services. The project does not operate an intermediary server.
+Inference requests are sent to `https://runtime.<region>.kiro.dev/`. Model discovery uses the regional CodeWhisperer model-catalog endpoint. Conversation messages, tool definitions, tool results, and images required for inference are transmitted to those services.
 
 Pi's provider model cache contains model metadata only. It does not contain credentials, conversations, images, or tool results.
 

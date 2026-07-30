@@ -1,13 +1,13 @@
 # pi-kiro-connector
 
-一个让 [Pi](https://pi.dev) 直接连接 Kiro 的独立扩展包，不需要 Kiro-Go、本地代理或其他网关进程。
+一个为 [Pi](https://pi.dev) 提供 Kiro Runtime 原生访问、模型发现、流式输出、思考、图片和工具能力的扩展包。
 
 [English](README.md)
 
 ## 功能
 
-- 注册独立的 `kiro` Provider，不覆盖 Pi 内置 Anthropic Provider
-- 直接调用区域 Kiro Runtime，并解析 AWS EventStream 响应
+- 通过专用 `kiro` Provider 支持 Kiro 模型目录返回的全部兼容模型
+- 调用区域 Kiro Runtime，并解析 AWS EventStream 响应
 - 支持文本、思考内容、图片、Pi 工具、工具结果、流式输出和取消
 - 从 Kiro 区域模型目录发现模型及 Token 限制
 - 离线启动时使用内置回退模型目录
@@ -22,7 +22,7 @@
 2. Pi 0.83.0 或更高版本
 3. Kiro API Key，通常以 `ksk_` 开头
 
-请只使用你有权使用的凭据与服务。本项目是独立兼容性项目，不是 Kiro 官方客户端。
+请只使用你有权使用的凭据与服务。
 
 ## 安装
 
@@ -139,11 +139,11 @@ Pi 会通过 Provider 模型存储缓存成功发现的模型目录，缓存仅�
 
 ### 认证失败
 
-重新执行 `/login kiro`，或确认 `KIRO_API_KEY` 是 Kiro 账号 Key，而不是第三方网关的 API Key。`/kiro-status` 会报告 HTTP 401/403，但不会显示凭据。
+重新执行 `/login kiro`，或确认 `KIRO_API_KEY` 包含有效的 Kiro API Key。`/kiro-status` 会报告 HTTP 401/403，但不会显示凭据。
 
 ### 区域端点失败
 
-检查 `KIRO_REGION`，它应是 `us-east-1`、`eu-central-1` 之类的区域标签。请删除旧的 `KIRO_BASE_URL` 配置；独立版本不再使用它。
+检查 `KIRO_REGION`，它应是 `us-east-1`、`eu-central-1` 之类的区域标签。
 
 ### 模型没有刷新
 
@@ -169,16 +169,12 @@ npm run validate
 
 ## 安全与隐私
 
-请求会包含推理所需的对话上下文，并直接发送至 Kiro 区域服务，不经过本项目运营的中转服务。凭据处理、安全报告及审查建议见 [SECURITY.md](SECURITY.md)。
+请求会包含推理所需的对话上下文，并发送至 Kiro 区域服务。凭据处理、安全报告及审查建议见 [SECURITY.md](SECURITY.md)。
 
-## 许可证与归属
+## 许可证
 
-本项目使用 [MIT](LICENSE) 许可证。协议实现研究参考了同为 MIT 许可证的 Kiro-Go 项目，其版权和许可证声明保留在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。Kiro-Go 不是运行时依赖。
+本项目使用 [MIT](LICENSE) 许可证。
 
 ## 参与贡献
 
 参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## 免责声明
-
-本项目是独立兼容性项目，与 Amazon、AWS、Kiro、Pi 维护者及 Kiro-Go 维护者均无隶属、背书或赞助关系。相关产品名称仅用于说明兼容性。
