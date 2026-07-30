@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible connector problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include API keys, access tokens, private request content, or Pi auth files.
+  - type: input
+    id: pi-version
+    attributes:
+      label: Pi version
+      placeholder: 0.83.0
+    validations:
+      required: true
+  - type: input
+    id: connector-version
+    attributes:
+      label: Connector version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: region
+    attributes:
+      label: Kiro region
+      placeholder: us-east-1
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include expected behavior, actual behavior, and minimal reproduction steps.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Remove credentials, tokens, conversation content, and private paths before pasting logs.
+      render: shell
