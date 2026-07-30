@@ -6,7 +6,9 @@ All notable changes to this project will be documented here. This project follow
 
 ### Added
 - Dedicated `kiro` Provider supporting compatible models from Kiro's regional catalog.
+- AWS Builder ID device authorization through `/login kiro`, with persisted OAuth credentials and automatic token refresh.
 - Kiro API-key setup through `/login kiro`, `KIRO_API_KEY`, and `KIRO_REGION`.
+- Authentication-aware routing between the API-key Runtime and Builder ID account data plane.
 - Native Pi-to-Kiro message, image, tool, and tool-result translation.
 - Incremental AWS EventStream decoding with CRC and truncation validation.
 - Streaming text, reasoning, usage, tool calls, cancellation, and sanitized errors.

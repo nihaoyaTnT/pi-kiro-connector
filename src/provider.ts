@@ -5,9 +5,22 @@ import {
   type Model,
   type Provider,
 } from "@earendil-works/pi-ai";
+import {
+  apiKeyRequestAuth,
+  builderIdAuthHeaders,
+  builderIdRequestAuth,
+  isBuilderIdCredential,
+} from "./auth.ts";
 import { discoverModels } from "./client.ts";
-import { DEFAULT_REGION, normalizeRegion, parseKiroCredential, runtimeUrl } from "./config.ts";
+import {
+  builderIdRuntimeUrl,
+  DEFAULT_REGION,
+  normalizeRegion,
+  parseKiroCredential,
+  runtimeUrl,
+} from "./config.ts";
 import { fallbackModels } from "./models.ts";
+import { loginBuilderId, refreshBuilderId } from "./oauth.ts";
 import { streamKiro } from "./stream.ts";
 
 export const PROVIDER_ID = "kiro";
@@ -22,7 +35,7 @@ function modelCatalog(): Model<typeof KIRO_API>[] {
   }));
 }
 
-async function loginKiro(interaction: AuthInteraction): Promise<ApiKeyCredential> {
+async function loginKiroApiKey(interaction: AuthInteraction): Promise<ApiKeyCredential> {
   const rawKey = await interaction.prompt({
     type: "secret",
     message: "Enter your Kiro API key (ksk_... or ksk_...|region):",
@@ -49,7 +62,7 @@ export function createKiroProvider(): Provider<typeof KIRO_API> {
     auth: {
       apiKey: {
         name: "Kiro API key",
-        login: loginKiro,
+        login: loginKiroApiKey,
         async check({ ctx, credential }) {
           const key = credential?.key ?? (await ctx.env("KIRO_API_KEY"));
           if (!key?.trim()) return undefined;
@@ -71,21 +84,43 @@ export function createKiroProvider(): Provider<typeof KIRO_API> {
           };
         },
       },
+      oauth: {
+        name: "Kiro Builder ID",
+        loginLabel: "Sign in with AWS Builder ID",
+        login: loginBuilderId,
+        refresh: refreshBuilderId,
+        async toAuth(credential) {
+          if (!isBuilderIdCredential(credential)) {
+            throw new Error("Invalid Kiro Builder ID credential metadata; sign in again");
+          }
+          return {
+            apiKey: credential.access,
+            headers: builderIdAuthHeaders(credential),
+            baseUrl: builderIdRuntimeUrl(credential.profileArn),
+          };
+        },
+      },
     },
     models: modelCatalog(),
     async fetchModels({ credential, signal }) {
-      if (credential?.type !== "api_key" || !credential.key) return [];
-      const models = await discoverModels({
-        rawKey: credential.key,
-        region: credential.env?.KIRO_REGION,
-        signal,
-      });
-      const region = normalizeRegion(credential.env?.KIRO_REGION);
+      if (!credential) return [];
+      const auth = credential.type === "oauth"
+        ? isBuilderIdCredential(credential)
+          ? builderIdRequestAuth(credential)
+          : undefined
+        : credential.key
+          ? apiKeyRequestAuth(credential.key, credential.env?.KIRO_REGION)
+          : undefined;
+      if (!auth) return [];
+      const models = await discoverModels({ auth, signal });
+      const baseUrl = auth.type === "api_key"
+        ? runtimeUrl(auth.region)
+        : builderIdRuntimeUrl(auth.profileArn);
       return models.map((model) => ({
         ...model,
         api: KIRO_API,
         provider: PROVIDER_ID,
-        baseUrl: runtimeUrl(region),
+        baseUrl,
       }));
     },
     api: { stream: streamKiro, streamSimple: streamKiro },

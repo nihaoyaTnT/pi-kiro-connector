@@ -1,8 +1,9 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { requestAuthFromOptions, type KiroRequestAuth } from "../src/auth.ts";
 import { probeKiro } from "../src/client.ts";
-import { DEFAULT_REGION, normalizeRegion, runtimeUrl } from "../src/config.ts";
+import { DEFAULT_REGION, runtimeUrl } from "../src/config.ts";
 import { createKiroProvider, PROVIDER_ID } from "../src/provider.ts";
 
 function kiroModels(ctx: ExtensionContext) {
@@ -10,20 +11,20 @@ function kiroModels(ctx: ExtensionContext) {
 }
 
 async function resolvedAuth(ctx: ExtensionContext): Promise<{
-  apiKey?: string;
-  region: string;
+  auth?: KiroRequestAuth;
   source: string;
 }> {
   try {
-    const auth = await ctx.modelRegistry.getProviderAuth(PROVIDER_ID);
+    const resolved = await ctx.modelRegistry.getProviderAuth(PROVIDER_ID);
+    const token = resolved?.auth.apiKey?.trim();
     return {
-      apiKey: auth?.auth.apiKey,
-      region: normalizeRegion(auth?.env?.KIRO_REGION ?? process.env.KIRO_REGION),
-      source: auth?.source ?? "not configured",
+      auth: token
+        ? requestAuthFromOptions(token, resolved?.env, resolved?.auth.headers)
+        : undefined,
+      source: resolved?.source ?? "not configured",
     };
   } catch (error) {
     return {
-      region: normalizeRegion(process.env.KIRO_REGION),
       source: `resolution failed: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -41,22 +42,22 @@ function formatStatus(result: Awaited<ReturnType<typeof probeKiro>>, source: str
 }
 
 async function status(ctx: ExtensionContext, signal?: AbortSignal) {
-  const auth = await resolvedAuth(ctx);
-  if (!auth.apiKey) {
+  const resolved = await resolvedAuth(ctx);
+  if (!resolved.auth) {
     return {
       result: {
         ok: false,
-        endpoint: runtimeUrl(auth.region),
+        endpoint: runtimeUrl(DEFAULT_REGION),
         status: 0,
         modelCount: 0,
-        error: "No Kiro API key. Run /login kiro or set KIRO_API_KEY.",
+        error: "Kiro authentication is unavailable. Run /login kiro or set KIRO_API_KEY.",
       },
-      auth,
+      auth: resolved,
     };
   }
   return {
-    result: await probeKiro({ rawKey: auth.apiKey, region: auth.region, signal }),
-    auth,
+    result: await probeKiro({ auth: resolved.auth, signal }),
+    auth: resolved,
   };
 }
 

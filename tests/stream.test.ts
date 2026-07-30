@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Context, Model } from "@earendil-works/pi-ai";
+import {
+  INTERNAL_AUTH_REGION,
+  INTERNAL_AUTH_TYPE,
+  INTERNAL_MACHINE_ID,
+  INTERNAL_PROFILE_ARN,
+} from "../src/auth.ts";
 import { encodeEventStreamFrame } from "../src/eventstream.ts";
 import { streamKiro } from "../src/stream.ts";
 
@@ -59,6 +65,41 @@ test("maps Kiro reasoning and repeated text into Pi stream events", async () => 
     events.filter((event) => event.type === "text_delta").map((event) => event.delta).join(""),
     "haha",
   );
+});
+
+test("routes Pi OAuth stream options through the Builder ID data plane", async () => {
+  const profileArn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
+  let requestUrl = "";
+  let requestHeaders = new Headers();
+  let requestBody = "";
+  const fetcher: typeof fetch = async (input, init) => {
+    requestUrl = String(input);
+    requestHeaders = new Headers(init?.headers);
+    requestBody = String(init?.body);
+    return responseWithFrames(encodeEventStreamFrame("assistantResponseEvent", { content: "signed in" }));
+  };
+  const stream = streamKiro(model, context, {
+    apiKey: "builder_access_token",
+    headers: {
+      [INTERNAL_AUTH_TYPE]: "builder_id",
+      [INTERNAL_AUTH_REGION]: "us-east-1",
+      [INTERNAL_MACHINE_ID]: "12345678-1234-4234-8234-123456789abc",
+      [INTERNAL_PROFILE_ARN]: profileArn,
+    },
+    fetch: fetcher,
+  });
+  const result = await stream.result();
+
+  assert.equal(result.stopReason, "stop");
+  assert.equal(requestUrl, "https://q.eu-central-1.amazonaws.com/generateAssistantResponse");
+  assert.equal(requestHeaders.get("authorization"), "Bearer builder_access_token");
+  assert.equal(requestHeaders.get(INTERNAL_AUTH_TYPE), null);
+  const payload = JSON.parse(requestBody) as {
+    profileArn?: string;
+    conversationState: { currentMessage: { userInputMessage: { origin: string } } };
+  };
+  assert.equal(payload.profileArn, profileArn);
+  assert.equal(payload.conversationState.currentMessage.userInputMessage.origin, "AI_EDITOR");
 });
 
 test("assembles fragmented Kiro tool input and emits a Pi tool call", async () => {

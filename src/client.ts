@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { FetchFunction, ProviderResponse } from "@earendil-works/pi-ai";
+import { apiKeyRequestAuth, type KiroRequestAuth } from "./auth.ts";
 import {
+  builderIdModelsUrl,
+  builderIdRuntimeUrl,
   KIRO_STREAMING_TARGET,
-  kiroUserAgent,
+  kiroUserAgentForMachineId,
   modelsUrl,
-  parseKiroCredential,
   runtimeUrl,
-  type KiroCredential,
 } from "./config.ts";
 import { decodeEventStream, type KiroWireEvent } from "./eventstream.ts";
 import { toModelConfig, type DiscoveredModel, type KiroModelConfig } from "./models.ts";
@@ -19,14 +20,22 @@ export interface KiroModelResponse {
   tokenLimits?: { maxInputTokens?: unknown; maxOutputTokens?: unknown };
 }
 
-function baseHeaders(credential: KiroCredential, streaming: boolean): Record<string, string> {
-  const agent = kiroUserAgent(credential.apiKey, streaming);
+function endpoint(auth: KiroRequestAuth): string {
+  return auth.type === "api_key" ? runtimeUrl(auth.region) : builderIdRuntimeUrl(auth.profileArn);
+}
+
+function catalogUrl(auth: KiroRequestAuth): string {
+  return auth.type === "api_key" ? modelsUrl(auth.region) : builderIdModelsUrl(auth.profileArn);
+}
+
+function baseHeaders(auth: KiroRequestAuth, streaming: boolean): Record<string, string> {
+  const agent = kiroUserAgentForMachineId(auth.machineId, streaming);
   return {
-    Authorization: `Bearer ${credential.apiKey}`,
-    tokentype: "API_KEY",
+    Authorization: `Bearer ${auth.token}`,
+    ...(auth.type === "api_key" ? { tokentype: "API_KEY" } : {}),
     "User-Agent": agent.userAgent,
     "x-amz-user-agent": agent.amzUserAgent,
-    "x-amzn-codewhisperer-optout": streaming ? "false" : "true",
+    "x-amzn-codewhisperer-optout": auth.type === "api_key" && streaming ? "false" : "true",
   };
 }
 
@@ -38,32 +47,62 @@ function safeErrorBody(text: string, secrets: readonly string[] = []): string {
   return normalized.length > 500 ? `${normalized.slice(0, 500)}…` : normalized;
 }
 
-export function requestHeaders(rawKey: string, explicitRegion?: string): Record<string, string> {
-  const credential = parseKiroCredential(rawKey, explicitRegion);
+export function headersForAuth(auth: KiroRequestAuth): Record<string, string> {
   return {
-    ...baseHeaders(credential, true),
+    ...baseHeaders(auth, true),
     Accept: "*/*",
-    "Content-Type": "application/x-amz-json-1.0",
-    "X-Amz-Target": KIRO_STREAMING_TARGET,
+    "Content-Type": auth.type === "api_key" ? "application/x-amz-json-1.0" : "application/json",
+    ...(auth.type === "api_key" ? { "X-Amz-Target": KIRO_STREAMING_TARGET } : {}),
+    ...(auth.type === "builder_id" ? { "x-amzn-kiro-agent-mode": "vibe" } : {}),
     "Amz-Sdk-Request": "attempt=1; max=1",
     "Amz-Sdk-Invocation-Id": randomUUID(),
   };
 }
 
+/** Backward-compatible helper for API-key request header tests and consumers. */
+export function requestHeaders(rawKey: string, explicitRegion?: string): Record<string, string> {
+  return headersForAuth(apiKeyRequestAuth(rawKey, explicitRegion));
+}
+
+function payloadForAuth(payload: KiroPayload, auth: KiroRequestAuth): KiroPayload {
+  const origin = auth.type === "api_key" ? "KIRO_CLI" : "AI_EDITOR";
+  const { profileArn: _untrustedProfileArn, ...safePayload } = payload;
+  return {
+    ...safePayload,
+    conversationState: {
+      ...payload.conversationState,
+      currentMessage: {
+        userInputMessage: {
+          ...payload.conversationState.currentMessage.userInputMessage,
+          origin,
+        },
+      },
+      ...(payload.conversationState.history
+        ? {
+            history: payload.conversationState.history.map((entry) =>
+              entry.userInputMessage
+                ? { userInputMessage: { ...entry.userInputMessage, origin } }
+                : entry,
+            ),
+          }
+        : {}),
+    },
+    ...(auth.type === "builder_id" && auth.profileArn ? { profileArn: auth.profileArn } : {}),
+  };
+}
+
 export async function* generateAssistantResponse(input: {
-  rawKey: string;
-  region?: string;
+  auth: KiroRequestAuth;
   payload: KiroPayload;
   signal?: AbortSignal;
   fetch?: FetchFunction;
   onResponse?: (response: ProviderResponse) => void | Promise<void>;
 }): AsyncGenerator<KiroWireEvent> {
-  const credential = parseKiroCredential(input.rawKey, input.region);
   const fetcher = input.fetch ?? globalThis.fetch;
-  const response = await fetcher(runtimeUrl(credential.region), {
+  const response = await fetcher(endpoint(input.auth), {
     method: "POST",
-    headers: requestHeaders(credential.apiKey, credential.region),
-    body: JSON.stringify(input.payload),
+    headers: headersForAuth(input.auth),
+    body: JSON.stringify(payloadForAuth(input.payload, input.auth)),
     signal: input.signal,
   });
   await input.onResponse?.({
@@ -71,7 +110,7 @@ export async function* generateAssistantResponse(input: {
     headers: Object.fromEntries(response.headers.entries()),
   });
   if (!response.ok) {
-    const detail = safeErrorBody(await response.text(), [credential.apiKey, input.rawKey]);
+    const detail = safeErrorBody(await response.text(), [input.auth.token]);
     throw new Error(`Kiro Runtime request failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
   }
   if (!response.body) throw new Error("Kiro Runtime returned an empty response body");
@@ -99,21 +138,19 @@ function discoveredModel(model: KiroModelResponse): DiscoveredModel | undefined 
 }
 
 export async function discoverModels(input: {
-  rawKey: string;
-  region?: string;
+  auth: KiroRequestAuth;
   signal?: AbortSignal;
   fetch?: FetchFunction;
 }): Promise<KiroModelConfig[]> {
-  const credential = parseKiroCredential(input.rawKey, input.region);
-  const response = await (input.fetch ?? globalThis.fetch)(modelsUrl(credential.region), {
+  const response = await (input.fetch ?? globalThis.fetch)(catalogUrl(input.auth), {
     headers: {
-      ...baseHeaders(credential, false),
+      ...baseHeaders(input.auth, false),
       Accept: "application/json",
     },
     signal: input.signal,
   });
   if (!response.ok) {
-    const detail = safeErrorBody(await response.text(), [credential.apiKey, input.rawKey]);
+    const detail = safeErrorBody(await response.text(), [input.auth.token]);
     throw new Error(`Kiro model discovery failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
   }
   const body = (await response.json()) as { models?: unknown };
@@ -141,17 +178,15 @@ export interface RuntimeProbe {
 }
 
 export async function probeKiro(input: {
-  rawKey: string;
-  region?: string;
+  auth: KiroRequestAuth;
   signal?: AbortSignal;
   fetch?: FetchFunction;
 }): Promise<RuntimeProbe> {
-  const credential = parseKiroCredential(input.rawKey, input.region);
   try {
     const models = await discoverModels(input);
     return {
       ok: true,
-      endpoint: runtimeUrl(credential.region),
+      endpoint: endpoint(input.auth),
       status: 200,
       modelCount: models.length,
     };
@@ -161,7 +196,7 @@ export async function probeKiro(input: {
     const status = Number(message.match(/HTTP (\d+)/)?.[1] ?? 0);
     return {
       ok: false,
-      endpoint: runtimeUrl(credential.region),
+      endpoint: endpoint(input.auth),
       status,
       modelCount: 0,
       error: message,

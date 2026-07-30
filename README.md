@@ -11,16 +11,17 @@ A [Pi](https://pi.dev) package that adds native Kiro Runtime access with model d
 - Supports streaming text, reasoning, images, Pi tools, tool results, and cancellation
 - Discovers models and token limits from Kiro's regional model catalog
 - Provides a built-in fallback catalog for offline startup
-- Supports Pi's `/login kiro` credential store or `KIRO_API_KEY`
+- Supports AWS Builder ID account sign-in and automatic token refresh through `/login kiro`
+- Supports Kiro API keys through `/login kiro` or `KIRO_API_KEY`
 - Adds `/kiro-status`, `/kiro-use`, and the LLM-callable `kiro_connection` tool
-- Never returns or intentionally logs API keys
+- Never returns or intentionally logs credentials
 - Has no runtime npm dependencies beyond Pi's package peers
 
 ## Requirements
 
 1. Node.js 22.19.0 or newer
 2. Pi 0.83.0 or newer
-3. A Kiro API key, typically beginning with `ksk_`
+3. An AWS Builder ID account authorized for Kiro, or a Kiro API key typically beginning with `ksk_`
 
 Use only credentials and services you are authorized to access.
 
@@ -63,7 +64,12 @@ Start Pi and run:
 /login kiro
 ```
 
-Enter your Kiro API key as either `ksk_...` or `ksk_...|region`. Pi stores the credential in its normal provider credential store; the connector does not create a separate credential file.
+Pi offers two authentication methods:
+
+- **AWS Builder ID** — Pi displays a device code and opens or shows an AWS verification URL. Sign in with the account you use for Kiro and approve the request. Pi stores the OAuth credential in its normal provider credential store and refreshes access tokens automatically.
+- **Kiro API key** — enter `ksk_...` or `ksk_...|region`. Pi stores the key in the same provider credential store.
+
+Only one stored credential is active for the `kiro` provider. Running `/login kiro` again replaces it. The connector does not create a separate credential file.
 
 ### Environment variables
 
@@ -95,7 +101,7 @@ pi
 
 `KIRO_REGION` defaults to `us-east-1`. You may instead append the region to the key, for example `KIRO_API_KEY='ksk_...|eu-central-1'`. An explicit `KIRO_REGION` takes precedence over the appended value.
 
-Do not put a real key in `.env.example`, source control, issue reports, screenshots, or shell history shared with others.
+Do not put API keys, OAuth tokens, device codes, or Pi authentication files in source control, issue reports, screenshots, or shell history shared with others.
 
 ## Use
 
@@ -119,17 +125,19 @@ The `kiro_connection` tool supports:
 - `models` — list registered Kiro model IDs
 - `use` — switch to a Kiro model
 
-The status command and tool report only the credential source, region endpoint, status, and model count. They do not return the key.
+The status command and tool report only the credential source, endpoint, status, and model count. They do not return API keys or OAuth tokens.
 
 ## How it works
 
-The connector translates Pi messages into Kiro's native conversation format and sends them directly to:
+The connector translates Pi messages into Kiro's native conversation format. API-key requests use the regional Kiro Runtime:
 
 ```text
 https://runtime.<region>.kiro.dev/
 ```
 
-It discovers model metadata through Kiro's regional CodeWhisperer model-catalog operation. Runtime responses use binary AWS EventStream framing; the connector incrementally validates frame CRCs and maps text, reasoning, usage, and tool events into Pi's native stream protocol.
+AWS Builder ID sign-in uses AWS OIDC device authorization and the Kiro account data plane. Pi stores the access token, refresh token, registered client metadata, and optional Kiro profile ARN as one OAuth credential; access tokens are refreshed before expiry.
+
+Model metadata is discovered through the account's regional model-catalog operation. Responses use binary AWS EventStream framing; the connector incrementally validates frame CRCs and maps text, reasoning, usage, and tool events into Pi's native stream protocol.
 
 Pi controls reasoning through `/settings`, Shift+Tab, or `--thinking`. The connector adds Kiro's reasoning prompt only when a Pi reasoning level is enabled.
 
@@ -139,11 +147,11 @@ Pi caches a successfully discovered model catalog through its provider model sto
 
 ### Authentication fails
 
-Run `/login kiro` again or verify that `KIRO_API_KEY` contains a valid Kiro API key. `/kiro-status` reports HTTP 401 or 403 without displaying the credential.
+Run `/login kiro` again. For Builder ID, complete the device authorization using the same account you use for Kiro. For API-key authentication, verify that `KIRO_API_KEY` contains a valid Kiro API key. `/kiro-status` reports authentication failures without displaying credentials.
 
 ### The regional endpoint fails
 
-Verify `KIRO_REGION`. It must be a region label such as `us-east-1` or `eu-central-1`.
+For API-key authentication, verify `KIRO_REGION`; it must be a region label such as `us-east-1` or `eu-central-1`. Builder ID chooses its data-plane region from the account's Kiro profile when available.
 
 ### Models are not refreshed
 

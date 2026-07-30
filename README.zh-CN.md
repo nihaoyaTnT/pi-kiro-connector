@@ -7,20 +7,21 @@
 ## 功能
 
 - 通过专用 `kiro` Provider 支持 Kiro 模型目录返回的全部兼容模型
-- 调用区域 Kiro Runtime，并解析 AWS EventStream 响应
+- 调用 Kiro 区域数据面，并解析 AWS EventStream 响应
 - 支持文本、思考内容、图片、Pi 工具、工具结果、流式输出和取消
 - 从 Kiro 区域模型目录发现模型及 Token 限制
 - 离线启动时使用内置回退模型目录
-- 支持 Pi 的 `/login kiro` 凭据存储或 `KIRO_API_KEY`
+- 通过 `/login kiro` 支持 AWS Builder ID 账号登录和 Token 自动刷新
+- 通过 `/login kiro` 或 `KIRO_API_KEY` 支持 Kiro API Key
 - 提供 `/kiro-status`、`/kiro-use` 和模型可调用的 `kiro_connection` 工具
-- 不返回或主动记录 API Key
+- 不返回或主动记录凭据
 - 除 Pi 的 peer package 外没有运行时 npm 依赖
 
 ## 前置条件
 
 1. Node.js 22.19.0 或更高版本
 2. Pi 0.83.0 或更高版本
-3. Kiro API Key，通常以 `ksk_` 开头
+3. 已获 Kiro 使用权限的 AWS Builder ID 账号，或通常以 `ksk_` 开头的 Kiro API Key
 
 请只使用你有权使用的凭据与服务。
 
@@ -63,7 +64,12 @@ pi install .
 /login kiro
 ```
 
-输入 `ksk_...` 或 `ksk_...|区域`。Pi 会将凭据保存在标准 Provider 凭据存储中；连接器不会创建额外凭据文件。
+Pi 会提供两种认证方式：
+
+- **AWS Builder ID**：Pi 显示设备代码和 AWS 验证地址。使用你登录 Kiro 的账号完成授权。Pi 会把 OAuth 凭据保存在标准 Provider 凭据存储中，并自动刷新 Access Token。
+- **Kiro API Key**：输入 `ksk_...` 或 `ksk_...|区域`。Pi 会把 Key 保存在同一个 Provider 凭据存储中。
+
+`kiro` Provider 同一时间只使用一份已保存的凭据。再次执行 `/login kiro` 会替换原凭据。连接器不会创建额外凭据文件。
 
 ### 环境变量
 
@@ -95,7 +101,7 @@ pi
 
 `KIRO_REGION` 默认是 `us-east-1`。也可以把区域附加到 Key 后，例如 `KIRO_API_KEY='ksk_...|eu-central-1'`。单独设置的 `KIRO_REGION` 优先级更高。
 
-不要把真实 Key 写入 `.env.example`、源代码仓库、Issue、截图或会分享给他人的 Shell 历史。
+不要把 API Key、OAuth Token、设备代码或 Pi 认证文件写入源代码仓库、Issue、截图或会分享给他人的 Shell 历史。
 
 ## 使用
 
@@ -119,17 +125,19 @@ pi --provider kiro --model claude-sonnet-4.6
 - `models`：列出已注册的 Kiro 模型 ID
 - `use`：切换到 Kiro 模型
 
-状态命令和工具只报告凭据来源、区域端点、状态和模型数量，不会返回 Key。
+状态命令和工具只报告凭据来源、端点、状态和模型数量，不会返回 API Key 或 OAuth Token。
 
 ## 工作原理
 
-连接器把 Pi 消息转换为 Kiro 原生会话格式，并直接发送到：
+连接器把 Pi 消息转换为 Kiro 原生会话格式。API Key 请求使用区域 Kiro Runtime：
 
 ```text
 https://runtime.<region>.kiro.dev/
 ```
 
-模型元数据通过 Kiro 区域 CodeWhisperer 模型目录操作获取。Runtime 返回二进制 AWS EventStream；连接器会增量校验帧 CRC，并将文本、思考、用量和工具事件映射为 Pi 原生流协议。
+AWS Builder ID 使用 AWS OIDC 设备授权和 Kiro 账号数据面。Pi 会把 Access Token、Refresh Token、注册客户端元数据及可选的 Kiro Profile ARN 作为一份 OAuth 凭据保存，并在到期前自动刷新 Access Token。
+
+模型元数据通过账号对应的区域模型目录获取。服务返回二进制 AWS EventStream；连接器会增量校验帧 CRC，并将文本、思考、用量和工具事件映射为 Pi 原生流协议。
 
 Pi 通过 `/settings`、Shift+Tab 或 `--thinking` 控制思考级别。只有启用 Pi reasoning level 时，连接器才会加入 Kiro 思考提示。
 
@@ -139,11 +147,11 @@ Pi 会通过 Provider 模型存储缓存成功发现的模型目录，缓存仅�
 
 ### 认证失败
 
-重新执行 `/login kiro`，或确认 `KIRO_API_KEY` 包含有效的 Kiro API Key。`/kiro-status` 会报告 HTTP 401/403，但不会显示凭据。
+重新执行 `/login kiro`。使用 Builder ID 时，请通过你登录 Kiro 的同一账号完成设备授权；使用 API Key 时，请确认 `KIRO_API_KEY` 包含有效的 Kiro API Key。`/kiro-status` 会报告认证失败，但不会显示凭据。
 
 ### 区域端点失败
 
-检查 `KIRO_REGION`，它应是 `us-east-1`、`eu-central-1` 之类的区域标签。
+使用 API Key 时，检查 `KIRO_REGION`，它应是 `us-east-1`、`eu-central-1` 之类的区域标签。使用 Builder ID 时，连接器会优先从账号的 Kiro Profile 选择数据面区域。
 
 ### 模型没有刷新
 

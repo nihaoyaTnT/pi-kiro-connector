@@ -11,6 +11,7 @@ import {
   type ThinkingContent,
   type ToolCall,
 } from "@earendil-works/pi-ai";
+import { requestAuthFromOptions } from "./auth.ts";
 import { generateAssistantResponse } from "./client.ts";
 import { translateContext } from "./translate.ts";
 
@@ -221,11 +222,12 @@ export function streamKiro(
     });
 
     try {
-      const rawKey = requestOptions.apiKey?.trim();
-      if (!rawKey) throw new Error("No Kiro API key. Run /login kiro or set KIRO_API_KEY.");
+      const token = requestOptions.apiKey?.trim();
+      if (!token) throw new Error("Kiro authentication is unavailable. Run /login kiro or set KIRO_API_KEY.");
       if (requestOptions.signal?.aborted) {
         throw requestOptions.signal.reason ?? new Error("Request aborted");
       }
+      const auth = requestAuthFromOptions(token, requestOptions.env, requestOptions.headers);
 
       const transformed = requestOptions.onPayload
         ? await requestOptions.onPayload(translated.payload, model)
@@ -234,8 +236,7 @@ export function streamKiro(
 
       stream.push({ type: "start", partial: output });
       for await (const event of generateAssistantResponse({
-        rawKey,
-        region: requestOptions.env?.KIRO_REGION ?? process.env.KIRO_REGION,
+        auth,
         payload,
         signal: requestOptions.signal,
         fetch: requestOptions.fetch,

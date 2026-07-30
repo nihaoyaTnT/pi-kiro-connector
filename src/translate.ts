@@ -28,7 +28,7 @@ export interface KiroToolResult {
 export interface KiroUserInputMessage {
   content: string;
   modelId: string;
-  origin: "KIRO_CLI";
+  origin: "KIRO_CLI" | "AI_EDITOR";
   images?: KiroImage[];
   userInputMessageContext?: {
     tools?: Array<{
@@ -54,6 +54,7 @@ export interface KiroPayload {
       assistantResponseMessage?: { content: string; toolUses?: KiroToolUse[] };
     }>;
   };
+  profileArn?: string;
   inferenceConfig?: { maxTokens?: number; temperature?: number };
 }
 

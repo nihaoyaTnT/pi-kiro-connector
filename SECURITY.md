@@ -2,24 +2,27 @@
 
 ## Reporting a vulnerability
 
-Report vulnerabilities through a private GitHub Security Advisory after the repository is available. Do not publish credentials, access tokens, private request content, or reproducible exploit details in a public issue.
+Report vulnerabilities through a private GitHub Security Advisory. Do not publish credentials, access tokens, refresh tokens, client secrets, device codes, private request content, or reproducible exploit details in a public issue.
 
 ## Credential handling
 
-The connector supports two credential sources:
+The connector supports:
 
-- Pi's provider credential store, configured with `/login kiro`
+- AWS Builder ID device authorization through `/login kiro`
+- Kiro API keys through `/login kiro`
 - `KIRO_API_KEY` in the Pi process environment
 
-The connector does not create its own credential file. Pi may persist a key entered through `/login`; consult Pi's security documentation and protect its configuration directory accordingly. Commands, tools, model caches, and normal error messages do not include the key. Upstream error text is bounded and exact key values are redacted before it is surfaced.
+The connector does not create its own credential file. Pi stores the selected provider credential in its normal credential store. A Builder ID credential includes the access token, refresh token, dynamically registered OIDC client ID and client secret, authentication region, machine identifier, and an optional Kiro profile ARN. Pi refreshes the access token before expiry. Protect Pi's configuration directory and do not share its authentication file.
 
-A key may use `ksk_...|region`; the connector separates the region before constructing the `Authorization` header. `KIRO_REGION` and embedded region values are validated as DNS-safe region labels before use.
+A Kiro API key may use `ksk_...|region`; the connector separates the region before constructing the `Authorization` header. Regions, profile ARNs, machine identifiers, and provider-owned routing metadata are validated before use. Internal routing headers are consumed by the connector and are not forwarded upstream.
+
+Commands, tools, model caches, and normal status output do not include credentials. Upstream error text is bounded and known credential values are redacted before it is surfaced. Do not include API keys, OAuth tokens, registered client secrets, device codes, or Pi authentication files in logs, screenshots, issues, or source control.
 
 ## Network and data flow
 
-Inference requests are sent to `https://runtime.<region>.kiro.dev/`. Model discovery uses the regional CodeWhisperer model-catalog endpoint. Conversation messages, tool definitions, tool results, and images required for inference are transmitted to those services.
+Builder ID login contacts AWS OIDC endpoints at `https://oidc.<auth-region>.amazonaws.com/` for client registration, device authorization, and token refresh. API-key inference uses `https://runtime.<region>.kiro.dev/`. Builder ID inference and model discovery use the Kiro account data plane selected from the account profile when available, including regional `q.<region>.amazonaws.com` and CodeWhisperer endpoints.
 
-Pi's provider model cache contains model metadata only. It does not contain credentials, conversations, images, or tool results.
+Conversation messages, tool definitions, tool results, and images required for inference are transmitted to those services. Pi's provider model cache contains model metadata only; it does not contain credentials, conversations, images, or tool results.
 
 ## Extension trust
 

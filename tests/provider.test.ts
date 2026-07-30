@@ -6,6 +6,7 @@ import type {
   ModelsStoreEntry,
   ProviderModelsStore,
 } from "@earendil-works/pi-ai";
+import type { KiroBuilderIdCredential } from "../src/auth.ts";
 import { createKiroProvider } from "../src/provider.ts";
 
 function authContext(values: Record<string, string | undefined>): AuthContext {
@@ -60,6 +61,41 @@ test("the Pi login flow stores a parsed key and region without displaying the ke
   });
   assert.match(notifications.join("\n"), /ap-southeast-1/);
   assert.doesNotMatch(notifications.join("\n"), /ksk_login_example/);
+});
+
+test("refreshes Builder ID models and caches no OAuth credentials", async () => {
+  const provider = createKiroProvider();
+  const store = new MemoryStore();
+  const credential: KiroBuilderIdCredential = {
+    type: "oauth",
+    access: "builder_access_secret",
+    refresh: "builder_refresh_secret",
+    expires: Date.now() + 3_600_000,
+    authRegion: "us-east-1",
+    clientId: "builder_client_id",
+    clientSecret: "builder_client_secret",
+    machineId: "12345678-1234-4234-8234-123456789abc",
+    profileArn: "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example",
+    identityProvider: "builder_id",
+  };
+  const originalFetch = globalThis.fetch;
+  let requestUrl = "";
+  globalThis.fetch = async (input) => {
+    requestUrl = String(input);
+    return Response.json({ models: [{ modelId: "builder-model-1" }] });
+  };
+
+  try {
+    await provider.refreshModels?.({ credential, store, allowNetwork: true });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.match(requestUrl, /^https:\/\/q\.eu-central-1\.amazonaws\.com\/ListAvailableModels\?/);
+  assert.ok(provider.getModels().some((model) => model.id === "builder-model-1"));
+  const serialized = JSON.stringify(store.entry);
+  assert.doesNotMatch(serialized, /builder_(?:access|refresh|client)_secret|Authorization|Bearer/i);
+  assert.match(serialized, /builder-model-1/);
 });
 
 test("refreshes and caches only public model metadata", async () => {

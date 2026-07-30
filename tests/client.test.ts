@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { apiKeyRequestAuth, type KiroRequestAuth } from "../src/auth.ts";
 import { discoverModels, generateAssistantResponse, requestHeaders } from "../src/client.ts";
 import { encodeEventStreamFrame } from "../src/eventstream.ts";
 import type { KiroPayload } from "../src/translate.ts";
@@ -10,6 +11,16 @@ const payload: KiroPayload = {
     agentTaskType: "vibe",
     chatTriggerType: "MANUAL",
     conversationId: "conversation",
+    history: [
+      {
+        userInputMessage: {
+          content: "earlier",
+          modelId: "claude-sonnet-4.6",
+          origin: "KIRO_CLI",
+        },
+      },
+      { assistantResponseMessage: { content: "noted" } },
+    ],
     currentMessage: {
       userInputMessage: {
         content: "hello",
@@ -49,7 +60,7 @@ test("calls the regional Runtime and decodes its stream", async () => {
 
   const events = [];
   for await (const event of generateAssistantResponse({
-    rawKey: "ksk_example|eu-central-1",
+    auth: apiKeyRequestAuth("ksk_example|eu-central-1"),
     payload,
     fetch: fetcher,
     onResponse: (response) => {
@@ -89,8 +100,7 @@ test("discovers and deduplicates native Kiro model metadata", async () => {
   };
 
   const models = await discoverModels({
-    rawKey: "ksk_example",
-    region: "eu-west-1",
+    auth: apiKeyRequestAuth("ksk_example", "eu-west-1"),
     fetch: fetcher,
   });
   assert.deepEqual(models.map((model) => model.id), ["claude-sonnet-4.6", "auto"]);
@@ -99,13 +109,75 @@ test("discovers and deduplicates native Kiro model metadata", async () => {
   assert.deepEqual(models[1]?.input, ["text"]);
 });
 
+test("routes Builder ID requests through the account data plane without leaking local metadata", async () => {
+  const profileArn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
+  const auth: KiroRequestAuth = {
+    type: "builder_id",
+    token: "builder_access_token",
+    authRegion: "us-east-1",
+    machineId: "12345678-1234-4234-8234-123456789abc",
+    profileArn,
+  };
+  let requestUrl = "";
+  let requestInit: RequestInit | undefined;
+  const fetcher: typeof fetch = async (input, init) => {
+    requestUrl = String(input);
+    requestInit = init;
+    const frame = encodeEventStreamFrame("assistantResponseEvent", { content: "account" });
+    return new Response(
+      frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer,
+      { status: 200 },
+    );
+  };
+
+  for await (const _event of generateAssistantResponse({ auth, payload, fetch: fetcher })) {
+    // consume
+  }
+
+  const headers = new Headers(requestInit?.headers);
+  assert.equal(requestUrl, "https://q.eu-central-1.amazonaws.com/generateAssistantResponse");
+  assert.equal(headers.get("authorization"), "Bearer builder_access_token");
+  assert.equal(headers.get("tokentype"), null);
+  assert.equal(headers.get("x-amz-target"), null);
+  assert.equal(headers.get("x-amzn-kiro-agent-mode"), "vibe");
+  assert.equal(headers.get("x-pi-kiro-auth-type"), null);
+  const sent = JSON.parse(String(requestInit?.body)) as KiroPayload;
+  assert.equal(sent.profileArn, profileArn);
+  assert.equal(sent.conversationState.currentMessage.userInputMessage.origin, "AI_EDITOR");
+  assert.equal(sent.conversationState.history?.[0]?.userInputMessage?.origin, "AI_EDITOR");
+});
+
+test("discovers Builder ID models through the profile data plane", async () => {
+  const profileArn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
+  const auth: KiroRequestAuth = {
+    type: "builder_id",
+    token: "builder_access_token",
+    authRegion: "us-east-1",
+    machineId: "12345678-1234-4234-8234-123456789abc",
+    profileArn,
+  };
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.origin, "https://q.eu-central-1.amazonaws.com");
+    assert.equal(url.pathname, "/ListAvailableModels");
+    assert.equal(url.searchParams.get("profileArn"), profileArn);
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer builder_access_token");
+    assert.equal(headers.get("tokentype"), null);
+    return Response.json({ models: [{ modelId: "account-model" }] });
+  };
+
+  const models = await discoverModels({ auth, fetch: fetcher });
+  assert.deepEqual(models.map((model) => model.id), ["account-model"]);
+});
+
 test("does not echo credentials in upstream errors", async () => {
   const fetcher: typeof fetch = async () =>
     new Response("invalid ksk_super_secret token", { status: 401 });
   await assert.rejects(
     async () => {
       for await (const _event of generateAssistantResponse({
-        rawKey: "ksk_super_secret",
+        auth: apiKeyRequestAuth("ksk_super_secret"),
         payload,
         fetch: fetcher,
       })) {

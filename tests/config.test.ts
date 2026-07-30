@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  builderIdModelsUrl,
+  builderIdRuntimeUrl,
   DEFAULT_REGION,
   KIRO_STREAMING_TARGET,
   kiroUserAgent,
   machineIdForApiKey,
   modelsUrl,
+  normalizeProfileArn,
   normalizeRegion,
+  oidcUrl,
   parseKiroCredential,
+  profileRegion,
   runtimeUrl,
 } from "../src/config.ts";
 
@@ -40,10 +45,27 @@ test("builds only approved regional Kiro endpoints", () => {
     modelsUrl("eu-central-1"),
     "https://codewhisperer.eu-central-1.amazonaws.com/ListAvailableModels?origin=AI_EDITOR&maxResults=50",
   );
+  assert.equal(oidcUrl("us-east-1", "token"), "https://oidc.us-east-1.amazonaws.com/token");
+  assert.equal(
+    builderIdRuntimeUrl("arn:aws:codewhisperer:eu-central-1:123456789012:profile/example"),
+    "https://q.eu-central-1.amazonaws.com/generateAssistantResponse",
+  );
+  assert.match(
+    builderIdModelsUrl("arn:aws:codewhisperer:eu-central-1:123456789012:profile/example"),
+    /^https:\/\/q\.eu-central-1\.amazonaws\.com\/ListAvailableModels\?/,
+  );
   assert.equal(
     KIRO_STREAMING_TARGET,
     "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
   );
+});
+
+test("strictly validates Kiro profile ARNs", () => {
+  const arn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
+  assert.equal(normalizeProfileArn(` ${arn} `), arn);
+  assert.equal(profileRegion(arn), "eu-central-1");
+  assert.throws(() => normalizeProfileArn("arn:aws:codewhisperer:eu-central-1:123:profile/example"), /invalid/i);
+  assert.throws(() => normalizeProfileArn("arn:aws:codewhisperer:eu-central-1:123456789012:profile/a/b"), /invalid/i);
 });
 
 test("derives stable machine identity and protocol user agents", () => {
