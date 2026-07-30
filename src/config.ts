@@ -46,6 +46,29 @@ export function normalizeProfileArn(value: string): string {
   return profileArn;
 }
 
+export function normalizeStartUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error("Invalid AWS Access Portal Start URL");
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (
+    url.protocol !== "https:" ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.awsapps\.com$/.test(hostname) ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !/^\/start\/?$/.test(url.pathname)
+  ) {
+    throw new Error("Invalid AWS Access Portal Start URL");
+  }
+  return `https://${hostname}/start`;
+}
+
 export function profileRegion(value: string | undefined): string | undefined {
   if (!value?.trim()) return undefined;
   const profileArn = normalizeProfileArn(value);
@@ -86,7 +109,10 @@ export function builderIdModelsUrl(profileArn?: string): string {
   return url.toString();
 }
 
-export function oidcUrl(region: string, path: "client/register" | "device_authorization" | "token"): string {
+export function oidcUrl(
+  region: string,
+  path: "client/register" | "device_authorization" | "token" | "authorize",
+): string {
   return `https://oidc.${normalizeRegion(region)}.amazonaws.com/${path}`;
 }
 

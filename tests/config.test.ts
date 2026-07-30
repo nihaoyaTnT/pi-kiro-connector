@@ -10,6 +10,7 @@ import {
   modelsUrl,
   normalizeProfileArn,
   normalizeRegion,
+  normalizeStartUrl,
   oidcUrl,
   parseKiroCredential,
   profileRegion,
@@ -66,6 +67,21 @@ test("strictly validates Kiro profile ARNs", () => {
   assert.equal(profileRegion(arn), "eu-central-1");
   assert.throws(() => normalizeProfileArn("arn:aws:codewhisperer:eu-central-1:123:profile/example"), /invalid/i);
   assert.throws(() => normalizeProfileArn("arn:aws:codewhisperer:eu-central-1:123456789012:profile/a/b"), /invalid/i);
+});
+
+test("strictly validates AWS Access Portal Start URLs", () => {
+  assert.equal(
+    normalizeStartUrl(" HTTPS://D-1234567890.awsapps.com/start/ "),
+    "https://d-1234567890.awsapps.com/start",
+  );
+  for (const value of [
+    "http://company.awsapps.com/start",
+    "https://company.awsapps.com.evil.example/start",
+    "https://company.awsapps.com/start?token=secret",
+    "https://company.awsapps.com/other",
+  ]) {
+    assert.throws(() => normalizeStartUrl(value), /invalid AWS Access Portal Start URL/i);
+  }
 });
 
 test("derives stable machine identity and protocol user agents", () => {

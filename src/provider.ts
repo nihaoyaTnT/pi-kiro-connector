@@ -6,10 +6,10 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import {
+  accountAuthHeaders,
+  accountRequestAuth,
   apiKeyRequestAuth,
-  builderIdAuthHeaders,
-  builderIdRequestAuth,
-  isBuilderIdCredential,
+  isKiroOAuthCredential,
 } from "./auth.ts";
 import { discoverModels } from "./client.ts";
 import {
@@ -20,7 +20,7 @@ import {
   runtimeUrl,
 } from "./config.ts";
 import { fallbackModels } from "./models.ts";
-import { loginBuilderId, refreshBuilderId } from "./oauth.ts";
+import { loginKiroOAuth, refreshKiroOAuth } from "./oauth.ts";
 import { streamKiro } from "./stream.ts";
 
 export const PROVIDER_ID = "kiro";
@@ -85,17 +85,17 @@ export function createKiroProvider(): Provider<typeof KIRO_API> {
         },
       },
       oauth: {
-        name: "Kiro Builder ID",
-        loginLabel: "Sign in with AWS Builder ID",
-        login: loginBuilderId,
-        refresh: refreshBuilderId,
+        name: "Kiro account",
+        loginLabel: "Sign in with AWS Builder ID or company SSO",
+        login: loginKiroOAuth,
+        refresh: refreshKiroOAuth,
         async toAuth(credential) {
-          if (!isBuilderIdCredential(credential)) {
-            throw new Error("Invalid Kiro Builder ID credential metadata; sign in again");
+          if (!isKiroOAuthCredential(credential)) {
+            throw new Error("Invalid Kiro account credential metadata; sign in again");
           }
           return {
             apiKey: credential.access,
-            headers: builderIdAuthHeaders(credential),
+            headers: accountAuthHeaders(credential),
             baseUrl: builderIdRuntimeUrl(credential.profileArn),
           };
         },
@@ -105,8 +105,8 @@ export function createKiroProvider(): Provider<typeof KIRO_API> {
     async fetchModels({ credential, signal }) {
       if (!credential) return [];
       const auth = credential.type === "oauth"
-        ? isBuilderIdCredential(credential)
-          ? builderIdRequestAuth(credential)
+        ? isKiroOAuthCredential(credential)
+          ? accountRequestAuth(credential)
           : undefined
         : credential.key
           ? apiKeyRequestAuth(credential.key, credential.env?.KIRO_REGION)

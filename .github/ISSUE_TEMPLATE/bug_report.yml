@@ -5,7 +5,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Do not include API keys, access or refresh tokens, client secrets, device codes, private request content, or Pi auth files.
+      value: Do not include API keys, access or refresh tokens, authorization callback URLs/codes, company Start URLs, client secrets, device codes, private request content, or Pi auth files.
   - type: input
     id: pi-version
     attributes:
@@ -24,7 +24,7 @@ body:
     id: auth-method
     attributes:
       label: Authentication method
-      options: [AWS Builder ID, Kiro API key, KIRO_API_KEY environment variable]
+      options: [AWS Builder ID, AWS IAM Identity Center, Kiro API key, KIRO_API_KEY environment variable]
     validations:
       required: true
   - type: input
@@ -52,5 +52,5 @@ body:
     id: logs
     attributes:
       label: Sanitized logs
-      description: Remove credentials, tokens, client metadata, device codes, conversation content, and private paths before pasting logs.
+      description: Remove credentials, tokens, callback URLs/codes, company Start URLs, client metadata, device codes, conversation content, and private paths before pasting logs.
       render: shell

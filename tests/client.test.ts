@@ -109,10 +109,10 @@ test("discovers and deduplicates native Kiro model metadata", async () => {
   assert.deepEqual(models[1]?.input, ["text"]);
 });
 
-test("routes Builder ID requests through the account data plane without leaking local metadata", async () => {
+test("routes AWS account requests through the account data plane without leaking local metadata", async () => {
   const profileArn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
   const auth: KiroRequestAuth = {
-    type: "builder_id",
+    type: "account",
     token: "builder_access_token",
     authRegion: "us-east-1",
     machineId: "12345678-1234-4234-8234-123456789abc",
@@ -147,10 +147,10 @@ test("routes Builder ID requests through the account data plane without leaking 
   assert.equal(sent.conversationState.history?.[0]?.userInputMessage?.origin, "AI_EDITOR");
 });
 
-test("discovers Builder ID models through the profile data plane", async () => {
+test("discovers AWS account models through the profile data plane", async () => {
   const profileArn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
   const auth: KiroRequestAuth = {
-    type: "builder_id",
+    type: "account",
     token: "builder_access_token",
     authRegion: "us-east-1",
     machineId: "12345678-1234-4234-8234-123456789abc",

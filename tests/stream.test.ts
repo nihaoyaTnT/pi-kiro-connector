@@ -67,7 +67,7 @@ test("maps Kiro reasoning and repeated text into Pi stream events", async () => 
   );
 });
 
-test("routes Pi OAuth stream options through the Builder ID data plane", async () => {
+test("routes Pi OAuth stream options through the Kiro account data plane", async () => {
   const profileArn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
   let requestUrl = "";
   let requestHeaders = new Headers();
@@ -81,7 +81,7 @@ test("routes Pi OAuth stream options through the Builder ID data plane", async (
   const stream = streamKiro(model, context, {
     apiKey: "builder_access_token",
     headers: {
-      [INTERNAL_AUTH_TYPE]: "builder_id",
+      [INTERNAL_AUTH_TYPE]: "account",
       [INTERNAL_AUTH_REGION]: "us-east-1",
       [INTERNAL_MACHINE_ID]: "12345678-1234-4234-8234-123456789abc",
       [INTERNAL_PROFILE_ARN]: profileArn,

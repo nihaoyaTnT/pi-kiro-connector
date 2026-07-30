@@ -6,7 +6,10 @@ import type {
   ModelsStoreEntry,
   ProviderModelsStore,
 } from "@earendil-works/pi-ai";
-import type { KiroBuilderIdCredential } from "../src/auth.ts";
+import type {
+  KiroBuilderIdCredential,
+  KiroIdentityCenterCredential,
+} from "../src/auth.ts";
 import { createKiroProvider } from "../src/provider.ts";
 
 function authContext(values: Record<string, string | undefined>): AuthContext {
@@ -96,6 +99,45 @@ test("refreshes Builder ID models and caches no OAuth credentials", async () => 
   const serialized = JSON.stringify(store.entry);
   assert.doesNotMatch(serialized, /builder_(?:access|refresh|client)_secret|Authorization|Bearer/i);
   assert.match(serialized, /builder-model-1/);
+});
+
+test("refreshes IAM Identity Center models without caching enterprise metadata", async () => {
+  const provider = createKiroProvider();
+  const store = new MemoryStore();
+  const credential: KiroIdentityCenterCredential = {
+    type: "oauth",
+    access: "enterprise_access_secret",
+    refresh: "enterprise_refresh_secret",
+    expires: Date.now() + 3_600_000,
+    authRegion: "ap-southeast-2",
+    startUrl: "https://company.awsapps.com/start",
+    clientId: "enterprise_client_id",
+    clientSecret: "enterprise_client_secret",
+    machineId: "12345678-1234-4234-8234-123456789abc",
+    profileArn: "arn:aws:codewhisperer:eu-central-1:123456789012:profile/company",
+    identityProvider: "iam_identity_center",
+  };
+  const originalFetch = globalThis.fetch;
+  let requestUrl = "";
+  globalThis.fetch = async (input) => {
+    requestUrl = String(input);
+    return Response.json({ models: [{ modelId: "enterprise-model-1" }] });
+  };
+
+  try {
+    await provider.refreshModels?.({ credential, store, allowNetwork: true });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.match(requestUrl, /^https:\/\/q\.eu-central-1\.amazonaws\.com\/ListAvailableModels\?/);
+  assert.ok(provider.getModels().some((model) => model.id === "enterprise-model-1"));
+  const serialized = JSON.stringify(store.entry);
+  assert.doesNotMatch(
+    serialized,
+    /enterprise_(?:access|refresh|client)_secret|company\.awsapps\.com|iam_identity_center|Authorization|Bearer/i,
+  );
+  assert.match(serialized, /enterprise-model-1/);
 });
 
 test("refreshes and caches only public model metadata", async () => {

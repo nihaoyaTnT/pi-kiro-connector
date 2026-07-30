@@ -53,7 +53,7 @@ export function headersForAuth(auth: KiroRequestAuth): Record<string, string> {
     Accept: "*/*",
     "Content-Type": auth.type === "api_key" ? "application/x-amz-json-1.0" : "application/json",
     ...(auth.type === "api_key" ? { "X-Amz-Target": KIRO_STREAMING_TARGET } : {}),
-    ...(auth.type === "builder_id" ? { "x-amzn-kiro-agent-mode": "vibe" } : {}),
+    ...(auth.type === "account" ? { "x-amzn-kiro-agent-mode": "vibe" } : {}),
     "Amz-Sdk-Request": "attempt=1; max=1",
     "Amz-Sdk-Invocation-Id": randomUUID(),
   };
@@ -87,7 +87,7 @@ function payloadForAuth(payload: KiroPayload, auth: KiroRequestAuth): KiroPayloa
           }
         : {}),
     },
-    ...(auth.type === "builder_id" && auth.profileArn ? { profileArn: auth.profileArn } : {}),
+    ...(auth.type === "account" && auth.profileArn ? { profileArn: auth.profileArn } : {}),
   };
 }
 

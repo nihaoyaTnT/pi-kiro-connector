@@ -19,21 +19,33 @@ export type KiroRequestAuth =
       machineId: string;
     }
   | {
-      type: "builder_id";
+      type: "account";
       token: string;
       authRegion: string;
       machineId: string;
       profileArn?: string;
     };
 
-export interface KiroBuilderIdCredential extends OAuthCredential {
+export type KiroIdentityProvider = "builder_id" | "iam_identity_center";
+
+interface KiroOAuthCredentialBase extends OAuthCredential {
   authRegion: string;
   clientId: string;
   clientSecret: string;
   machineId: string;
   profileArn?: string;
+}
+
+export interface KiroBuilderIdCredential extends KiroOAuthCredentialBase {
   identityProvider: "builder_id";
 }
+
+export interface KiroIdentityCenterCredential extends KiroOAuthCredentialBase {
+  identityProvider: "iam_identity_center";
+  startUrl: string;
+}
+
+export type KiroOAuthCredential = KiroBuilderIdCredential | KiroIdentityCenterCredential;
 
 function headerValue(headers: ProviderHeaders | undefined, name: string): string | undefined {
   const entry = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name);
@@ -58,10 +70,10 @@ export function apiKeyRequestAuth(rawKey: string, region?: string): KiroRequestA
   };
 }
 
-export function builderIdRequestAuth(credential: KiroBuilderIdCredential): KiroRequestAuth {
-  if (!credential.access?.trim()) throw new Error("Kiro Builder ID access token is empty");
+export function accountRequestAuth(credential: KiroOAuthCredential): KiroRequestAuth {
+  if (!credential.access?.trim()) throw new Error("Kiro account access token is empty");
   return {
-    type: "builder_id",
+    type: "account",
     token: credential.access.trim(),
     authRegion: normalizeRegion(credential.authRegion),
     machineId: normalizeMachineId(credential.machineId),
@@ -71,16 +83,20 @@ export function builderIdRequestAuth(credential: KiroBuilderIdCredential): KiroR
   };
 }
 
+/** Backward-compatible name retained for consumers of the Builder ID helper. */
+export const builderIdRequestAuth = accountRequestAuth;
+
 /** Decode provider-owned metadata. These headers are consumed locally and never sent upstream. */
 export function requestAuthFromOptions(
   token: string,
   env?: ProviderEnv,
   headers?: ProviderHeaders,
 ): KiroRequestAuth {
-  if (headerValue(headers, INTERNAL_AUTH_TYPE) === "builder_id") {
+  const authType = headerValue(headers, INTERNAL_AUTH_TYPE);
+  if (authType === "account" || authType === "builder_id") {
     const profileArn = headerValue(headers, INTERNAL_PROFILE_ARN);
     return {
-      type: "builder_id",
+      type: "account",
       token: token.trim(),
       authRegion: normalizeRegion(headerValue(headers, INTERNAL_AUTH_REGION)),
       machineId: normalizeMachineId(headerValue(headers, INTERNAL_MACHINE_ID)),
@@ -90,11 +106,11 @@ export function requestAuthFromOptions(
   return apiKeyRequestAuth(token, env?.KIRO_REGION);
 }
 
-export function builderIdAuthHeaders(
-  credential: KiroBuilderIdCredential,
+export function accountAuthHeaders(
+  credential: KiroOAuthCredential,
 ): Record<string, string> {
-  const auth = builderIdRequestAuth(credential);
-  if (auth.type !== "builder_id") throw new Error("Expected Builder ID authentication");
+  const auth = accountRequestAuth(credential);
+  if (auth.type !== "account") throw new Error("Expected Kiro account authentication");
   return {
     [INTERNAL_AUTH_TYPE]: auth.type,
     [INTERNAL_AUTH_REGION]: auth.authRegion,
@@ -103,12 +119,26 @@ export function builderIdAuthHeaders(
   };
 }
 
-export function isBuilderIdCredential(value: OAuthCredential): value is KiroBuilderIdCredential {
+/** Backward-compatible name retained for consumers of the Builder ID helper. */
+export const builderIdAuthHeaders = accountAuthHeaders;
+
+export function isKiroOAuthCredential(value: OAuthCredential): value is KiroOAuthCredential {
   return (
-    value.identityProvider === "builder_id" &&
+    (value.identityProvider === "builder_id" || value.identityProvider === "iam_identity_center") &&
     typeof value.authRegion === "string" &&
     typeof value.clientId === "string" &&
     typeof value.clientSecret === "string" &&
-    typeof value.machineId === "string"
+    typeof value.machineId === "string" &&
+    (value.identityProvider !== "iam_identity_center" || typeof value.startUrl === "string")
   );
+}
+
+export function isBuilderIdCredential(value: OAuthCredential): value is KiroBuilderIdCredential {
+  return value.identityProvider === "builder_id" && isKiroOAuthCredential(value);
+}
+
+export function isIdentityCenterCredential(
+  value: OAuthCredential,
+): value is KiroIdentityCenterCredential {
+  return value.identityProvider === "iam_identity_center" && isKiroOAuthCredential(value);
 }

@@ -17,7 +17,7 @@ Try the extension without installing it globally:
 pi --offline --no-extensions -e ./extensions/kiro-connector.ts --list-models kiro
 ```
 
-For an authorized end-to-end test, either sign in through `/login kiro` with AWS Builder ID or configure a Kiro API key and run:
+For an authorized end-to-end test, sign in through `/login kiro` with AWS Builder ID or IAM Identity Center, or configure a Kiro API key and run:
 
 ```bash
 KIRO_API_KEY='ksk_...|us-east-1' pi --no-extensions \
@@ -25,7 +25,7 @@ KIRO_API_KEY='ksk_...|us-east-1' pi --no-extensions \
   --provider kiro --model claude-sonnet-4.6 -p 'Reply with OK'
 ```
 
-PowerShell users can set `$env:KIRO_API_KEY` and `$env:KIRO_REGION` before starting Pi. Never commit Pi's stored OAuth credential or captured device-authorization responses.
+PowerShell users can set `$env:KIRO_API_KEY` and `$env:KIRO_REGION` before starting Pi. Never commit Pi's stored OAuth credential, company Start URL, authorization callback URL/code, or captured device-authorization responses.
 
 ## Pull requests
 
@@ -37,7 +37,7 @@ PowerShell users can set `$env:KIRO_API_KEY` and `$env:KIRO_REGION` before start
 
 CI validates Node.js 22.19.0 and 24. Keep behavior compatible with the declared Node.js 22.19.0 minimum.
 
-Do not commit generated tarballs, `node_modules`, `.env` files, Kiro API keys, OAuth access or refresh tokens, registered OIDC client secrets, device codes, Pi authentication files, model-store files from a real installation, or captured request/response bodies containing user data.
+Do not commit generated tarballs, `node_modules`, `.env` files, Kiro API keys, OAuth access or refresh tokens, authorization callback URLs/codes, company Start URLs, registered OIDC client secrets, device codes, Pi authentication files, model-store files from a real installation, or captured request/response bodies containing user data.
 
 ## Protocol changes
 

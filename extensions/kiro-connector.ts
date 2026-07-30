@@ -106,7 +106,7 @@ export default function registerKiroConnector(pi: ExtensionAPI) {
     name: "kiro_connection",
     label: "Kiro Connection",
     description:
-      "Check the direct Kiro connection, list registered Kiro models, or switch Pi to a Kiro model. Never returns API keys.",
+      "Check the direct Kiro connection, list registered Kiro models, or switch Pi to a Kiro model. Never returns credentials.",
     promptSnippet: "Check the Kiro connection, list Kiro models, or switch to a Kiro model",
     parameters: Type.Object({
       action: StringEnum(["status", "models", "use"] as const, {

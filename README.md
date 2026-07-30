@@ -11,7 +11,7 @@ A [Pi](https://pi.dev) package that adds native Kiro Runtime access with model d
 - Supports streaming text, reasoning, images, Pi tools, tool results, and cancellation
 - Discovers models and token limits from Kiro's regional model catalog
 - Provides a built-in fallback catalog for offline startup
-- Supports AWS Builder ID account sign-in and automatic token refresh through `/login kiro`
+- Supports AWS Builder ID and AWS IAM Identity Center (company SSO) sign-in with automatic token refresh through `/login kiro`
 - Supports Kiro API keys through `/login kiro` or `KIRO_API_KEY`
 - Adds `/kiro-status`, `/kiro-use`, and the LLM-callable `kiro_connection` tool
 - Never returns or intentionally logs credentials
@@ -21,7 +21,7 @@ A [Pi](https://pi.dev) package that adds native Kiro Runtime access with model d
 
 1. Node.js 22.19.0 or newer
 2. Pi 0.83.0 or newer
-3. An AWS Builder ID account authorized for Kiro, or a Kiro API key typically beginning with `ksk_`
+3. An AWS Builder ID or IAM Identity Center account authorized for Kiro, or a Kiro API key typically beginning with `ksk_`
 
 Use only credentials and services you are authorized to access.
 
@@ -64,12 +64,15 @@ Start Pi and run:
 /login kiro
 ```
 
-Pi offers two authentication methods:
+Pi offers account sign-in or API-key authentication. Account sign-in then lets you choose:
 
-- **AWS Builder ID** — Pi displays a device code and opens or shows an AWS verification URL. Sign in with the account you use for Kiro and approve the request. Pi stores the OAuth credential in its normal provider credential store and refreshes access tokens automatically.
-- **Kiro API key** — enter `ksk_...` or `ksk_...|region`. Pi stores the key in the same provider credential store.
+- **AWS Builder ID** — Pi displays a device code and an AWS verification URL. Sign in with the account you use for Kiro and approve the request.
+- **AWS IAM Identity Center** — for a company AWS Access Portal. Enter the portal Start URL (for example, `https://company.awsapps.com/start`) and its SSO Region. Complete company SSO in the browser. The browser will redirect to `http://127.0.0.1/oauth/callback`; a local server is not required, so copy the full URL from the address bar and paste it into Pi when prompted.
+- **Kiro API key** — enter `ksk_...` or `ksk_...|region` in the API-key login option.
 
-Only one stored credential is active for the `kiro` provider. Running `/login kiro` again replaces it. The connector does not create a separate credential file.
+Pi stores the selected credential in its normal provider credential store and refreshes OAuth access tokens automatically. Only one stored credential is active for the `kiro` provider; running `/login kiro` again replaces it. The connector does not create a separate credential file.
+
+The IAM Identity Center SSO Region is the region shown in your company's AWS access-portal configuration. It is used only for AWS OIDC authentication; the connector selects the Kiro data-plane region separately from the account's Kiro profile.
 
 ### Environment variables
 
@@ -101,7 +104,7 @@ pi
 
 `KIRO_REGION` defaults to `us-east-1`. You may instead append the region to the key, for example `KIRO_API_KEY='ksk_...|eu-central-1'`. An explicit `KIRO_REGION` takes precedence over the appended value.
 
-Do not put API keys, OAuth tokens, device codes, or Pi authentication files in source control, issue reports, screenshots, or shell history shared with others.
+Do not put API keys, OAuth tokens, authorization callback URLs/codes, device codes, registered client secrets, or Pi authentication files in source control, issue reports, screenshots, or shell history shared with others.
 
 ## Use
 
@@ -135,7 +138,7 @@ The connector translates Pi messages into Kiro's native conversation format. API
 https://runtime.<region>.kiro.dev/
 ```
 
-AWS Builder ID sign-in uses AWS OIDC device authorization and the Kiro account data plane. Pi stores the access token, refresh token, registered client metadata, and optional Kiro profile ARN as one OAuth credential; access tokens are refreshed before expiry.
+AWS Builder ID uses AWS OIDC device authorization. IAM Identity Center uses the company's AWS Access Portal issuer with an authorization-code flow protected by PKCE and `state`. Pi stores the access token, refresh token, registered client metadata, authentication metadata, and optional Kiro profile ARN as one OAuth credential; access tokens are refreshed before expiry. Neither the identity-provider type nor the company Start URL is forwarded in inference requests.
 
 Model metadata is discovered through the account's regional model-catalog operation. Responses use binary AWS EventStream framing; the connector incrementally validates frame CRCs and maps text, reasoning, usage, and tool events into Pi's native stream protocol.
 
@@ -147,11 +150,11 @@ Pi caches a successfully discovered model catalog through its provider model sto
 
 ### Authentication fails
 
-Run `/login kiro` again. For Builder ID, complete the device authorization using the same account you use for Kiro. For API-key authentication, verify that `KIRO_API_KEY` contains a valid Kiro API key. `/kiro-status` reports authentication failures without displaying credentials.
+Run `/login kiro` again. For Builder ID, complete device authorization with the account you use for Kiro. For IAM Identity Center, verify the exact AWS Access Portal Start URL and SSO Region with your administrator, and paste the complete loopback callback URL into Pi. For API-key authentication, verify that `KIRO_API_KEY` contains a valid Kiro API key. `/kiro-status` reports authentication failures without displaying credentials.
 
 ### The regional endpoint fails
 
-For API-key authentication, verify `KIRO_REGION`; it must be a region label such as `us-east-1` or `eu-central-1`. Builder ID chooses its data-plane region from the account's Kiro profile when available.
+For API-key authentication, verify `KIRO_REGION`; it must be a region label such as `us-east-1` or `eu-central-1`. AWS account authentication chooses its Kiro data-plane region from the account profile when available. An IAM Identity Center SSO Region is an authentication setting and is not used as the Kiro data-plane region.
 
 ### Models are not refreshed
 
