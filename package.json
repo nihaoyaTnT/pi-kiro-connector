@@ -39,7 +39,7 @@
     "validate": "npm run check && npm test && npm run smoke && npm run pack:check"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

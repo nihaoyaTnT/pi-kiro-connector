@@ -4,7 +4,7 @@ Contributions are welcome.
 
 ## Development
 
-Requirements: Node.js 20 or newer and Pi 0.83.0 or newer.
+Requirements: Node.js 22.19.0 or newer and Pi 0.83.0 or newer.
 
 ```bash
 npm ci
@@ -35,7 +35,7 @@ PowerShell users can set `$env:KIRO_API_KEY` and `$env:KIRO_REGION` before start
 4. Update both READMEs and the changelog for user-visible changes.
 5. Explain compatibility, security, and data-flow implications.
 
-CI validates Node.js 20, 22, and 24. Keep behavior compatible with the declared Node.js 20 minimum.
+CI validates Node.js 22.19.0 and 24. Keep behavior compatible with the declared Node.js 22.19.0 minimum.
 
 Do not commit generated tarballs, `node_modules`, `.env` files, Kiro credentials, Pi authentication files, model-store files from a real installation, or captured request/response bodies containing user data.
 

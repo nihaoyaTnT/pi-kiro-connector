@@ -18,7 +18,7 @@
 
 ## 前置条件
 
-1. Node.js 20 或更高版本
+1. Node.js 22.19.0 或更高版本
 2. Pi 0.83.0 或更高版本
 3. Kiro API Key，通常以 `ksk_` 开头
 
@@ -165,7 +165,7 @@ npm ci
 npm run validate
 ```
 
-验证包括 TypeScript 检查、协议与单元测试、Pi 离线加载冒烟测试和 `npm pack --dry-run`。CI 覆盖 Node.js 20、22、24。
+验证包括 TypeScript 检查、协议与单元测试、Pi 离线加载冒烟测试和 `npm pack --dry-run`。CI 覆盖 Node.js 22.19.0 和 24。
 
 ## 安全与隐私
 

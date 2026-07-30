@@ -18,7 +18,7 @@ A [Pi](https://pi.dev) package that adds native Kiro Runtime access with model d
 
 ## Requirements
 
-1. Node.js 20 or newer
+1. Node.js 22.19.0 or newer
 2. Pi 0.83.0 or newer
 3. A Kiro API key, typically beginning with `ksk_`
 
@@ -165,7 +165,7 @@ npm ci
 npm run validate
 ```
 
-Validation runs TypeScript checks, protocol/unit tests, an offline Pi loading smoke test, and `npm pack --dry-run`. CI runs the suite on Node.js 20, 22, and 24.
+Validation runs TypeScript checks, protocol/unit tests, an offline Pi loading smoke test, and `npm pack --dry-run`. CI runs the suite on Node.js 22.19.0 and 24.
 
 ## Security and privacy
 

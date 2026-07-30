@@ -13,4 +13,4 @@ All notable changes to this project will be documented here. This project follow
 - Native regional model discovery with Pi model-store caching and offline fallbacks.
 - `/kiro-status`, `/kiro-use`, and the `kiro_connection` agent tool.
 - English and Simplified Chinese documentation, security guidance, tests, and CI.
-- Node.js 20, 22, and 24 validation coverage.
+- Node.js 22.19.0 and 24 validation coverage, matching Pi 0.83.0's runtime requirement.
