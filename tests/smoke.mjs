@@ -1,9 +1,15 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const cli = resolve(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js");
+const cliCandidates = [
+  resolve(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js"),
+  resolve(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"),
+];
+const cli = cliCandidates.find(existsSync);
+if (!cli) throw new Error("Could not locate the installed Pi CLI entry point");
 const result = spawnSync(
   process.execPath,
   [

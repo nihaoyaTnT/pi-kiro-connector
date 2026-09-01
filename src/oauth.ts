@@ -19,6 +19,12 @@ import {
   normalizeStartUrl,
   oidcUrl,
 } from "./config.ts";
+import {
+  MAX_ERROR_BODY_BYTES,
+  MAX_JSON_BODY_BYTES,
+  readBoundedText,
+  requestWithRetry,
+} from "./http.ts";
 
 const BUILDER_ID_START_URL = "https://view.awsapps.com/start";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -99,8 +105,15 @@ async function responseJson(
   response: Response,
   action: string,
   secrets: readonly string[] = [],
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const body = await response.text();
+  const body = await readBoundedText(
+    response,
+    response.ok ? MAX_JSON_BODY_BYTES : MAX_ERROR_BODY_BYTES,
+    action,
+    undefined,
+    signal,
+  );
   if (!response.ok) {
     throw new Error(
       `${action} failed (HTTP ${response.status})${body ? `: ${redact(body, secrets)}` : ""}`,
@@ -125,13 +138,22 @@ async function postJson(
     secrets?: readonly string[];
   },
 ): Promise<Record<string, unknown>> {
-  const response = await (input.fetch ?? globalThis.fetch)(url, {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal: input.signal,
+  const response = await requestWithRetry({
+    fetch: input.fetch,
+    url,
+    init: () => ({
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+    policy: {
+      signal: input.signal,
+      maxRetries: 0,
+      retryNetworkErrors: false,
+      action: input.action,
+    },
   });
-  return responseJson(response, input.action, input.secrets);
+  return responseJson(response, input.action, input.secrets, input.signal);
 }
 
 export async function startBuilderIdAuthorization(input: {
@@ -204,28 +226,43 @@ async function discoverAccountProfile(input: {
   accessToken: string;
   machineId: string;
   identityProvider: KiroOAuthCredential["identityProvider"];
+  authRegion?: string;
   signal?: AbortSignal;
   fetch?: FetchFunction;
 }): Promise<string | undefined> {
   const agent = kiroUserAgentForMachineId(input.machineId, false);
-  for (const region of DEFAULT_PROFILE_REGIONS) {
+  const regions = [...new Set([
+    ...(input.authRegion ? [normalizeRegion(input.authRegion)] : []),
+    ...DEFAULT_PROFILE_REGIONS,
+  ])];
+  for (const region of regions) {
     let nextToken: string | undefined;
     for (let page = 0; page < MAX_PROFILE_PAGES; page++) {
       try {
-        const response = await (input.fetch ?? globalThis.fetch)(builderIdProfilesUrl(region), {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            Authorization: `Bearer ${input.accessToken}`,
-            "Content-Type": "application/json",
-            "User-Agent": agent.userAgent,
-            "x-amz-user-agent": agent.amzUserAgent,
-            "x-amzn-codewhisperer-optout": "true",
-          },
-          body: JSON.stringify({ maxResults: 50, ...(nextToken ? { nextToken } : {}) }),
-          signal: input.signal,
+        const response = await requestWithRetry({
+          fetch: input.fetch,
+          url: builderIdProfilesUrl(region),
+          init: () => ({
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              Authorization: `Bearer ${input.accessToken}`,
+              "Content-Type": "application/json",
+              "User-Agent": agent.userAgent,
+              "x-amz-user-agent": agent.amzUserAgent,
+              "x-amzn-codewhisperer-optout": "true",
+            },
+            body: JSON.stringify({ maxResults: 50, ...(nextToken ? { nextToken } : {}) }),
+          }),
+          policy: { signal: input.signal, action: "Kiro profile discovery" },
         });
-        const body = await response.text();
+        const body = await readBoundedText(
+          response,
+          response.ok ? MAX_JSON_BODY_BYTES : MAX_ERROR_BODY_BYTES,
+          "Kiro profile discovery",
+          undefined,
+          input.signal,
+        );
         if (!response.ok) {
           if (
             input.identityProvider === "builder_id" &&
@@ -263,18 +300,33 @@ async function requestDeviceToken(
   authorization: DeviceAuthorization,
   input: { signal?: AbortSignal; fetch?: FetchFunction },
 ): Promise<TokenResponse> {
-  const response = await (input.fetch ?? globalThis.fetch)(oidcUrl(authorization.authRegion, "token"), {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({
-      clientId: authorization.clientId,
-      clientSecret: authorization.clientSecret,
-      grantType: DEVICE_GRANT,
-      deviceCode: authorization.deviceCode,
+  const response = await requestWithRetry({
+    fetch: input.fetch,
+    url: oidcUrl(authorization.authRegion, "token"),
+    init: () => ({
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: authorization.clientId,
+        clientSecret: authorization.clientSecret,
+        grantType: DEVICE_GRANT,
+        deviceCode: authorization.deviceCode,
+      }),
     }),
-    signal: input.signal,
+    policy: {
+      signal: input.signal,
+      maxRetries: 0,
+      retryNetworkErrors: false,
+      action: "Kiro Builder ID token request",
+    },
   });
-  const body = await response.text();
+  const body = await readBoundedText(
+    response,
+    response.ok ? MAX_JSON_BODY_BYTES : MAX_ERROR_BODY_BYTES,
+    "Kiro Builder ID token request",
+    undefined,
+    input.signal,
+  );
   let parsed: TokenResponse = {};
   try {
     parsed = JSON.parse(body) as TokenResponse;
@@ -310,6 +362,7 @@ export async function completeBuilderIdAuthorization(
             accessToken: access,
             machineId,
             identityProvider: "builder_id",
+            authRegion: authorization.authRegion,
             signal: input.signal,
             fetch: input.fetch,
           });
@@ -500,6 +553,7 @@ export async function completeIdentityCenterAuthorization(
         accessToken: access,
         machineId,
         identityProvider: "iam_identity_center",
+        authRegion: authorization.authRegion,
         signal: input.signal,
         fetch: input.fetch,
       });
@@ -614,6 +668,7 @@ export async function refreshKiroOAuth(
           accessToken: access,
           machineId: credential.machineId,
           identityProvider: credential.identityProvider,
+          authRegion: credential.authRegion,
           signal,
           fetch,
         });

@@ -6,6 +6,17 @@ export interface KiroWireEvent {
 
 const textDecoder = new TextDecoder();
 
+export const MAX_EVENTSTREAM_FRAME_BYTES = 16 * 1024 * 1024;
+export const MAX_EVENTSTREAM_HEADER_BYTES = 128 * 1024;
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+export interface EventStreamDecodeOptions {
+  signal?: AbortSignal;
+  idleTimeoutMs?: number;
+  maxFrameBytes?: number;
+  maxHeaderBytes?: number;
+}
+
 let crcTable: Uint32Array | undefined;
 function crc32(bytes: Uint8Array): number {
   crcTable ??= (() => {
@@ -106,31 +117,120 @@ function parseHeaders(bytes: Uint8Array): Map<string, unknown> {
   return headers;
 }
 
-async function* bodyChunks(
-  body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
-): AsyncGenerator<Uint8Array> {
-  if (Symbol.asyncIterator in body) {
-    for await (const chunk of body as AsyncIterable<Uint8Array>) yield chunk;
-    return;
+async function nextWithTimeout<T>(
+  operation: Promise<T>,
+  options: EventStreamDecodeOptions,
+): Promise<T> {
+  if (options.signal?.aborted) {
+    throw options.signal.reason ?? new Error("Request aborted");
   }
-  const reader = (body as ReadableStream<Uint8Array>).getReader();
-  try {
-    while (true) {
-      const result = await reader.read();
-      if (result.done) return;
-      yield result.value;
+  const timeoutMs = options.idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    if (timeoutMs > 0) {
+      timer = setTimeout(
+        () => reject(new Error(`Kiro EventStream was idle for ${timeoutMs}ms`)),
+        timeoutMs,
+      );
     }
+    if (options.signal) {
+      onAbort = () => reject(options.signal?.reason ?? new Error("Request aborted"));
+      options.signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  try {
+    return await Promise.race([operation, deadline]);
   } finally {
-    reader.releaseLock();
+    if (timer) clearTimeout(timer);
+    if (onAbort) options.signal?.removeEventListener("abort", onAbort);
   }
 }
 
-function concat(left: Uint8Array, right: Uint8Array): Uint8Array {
-  if (left.length === 0) return right;
-  const combined = new Uint8Array(left.length + right.length);
-  combined.set(left);
-  combined.set(right, left.length);
-  return combined;
+async function* bodyChunks(
+  body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
+  options: EventStreamDecodeOptions,
+): AsyncGenerator<Uint8Array> {
+  if ("getReader" in body && typeof body.getReader === "function") {
+    const reader = body.getReader();
+    let completed = false;
+    try {
+      while (true) {
+        const result = await nextWithTimeout(reader.read(), options);
+        if (result.done) {
+          completed = true;
+          return;
+        }
+        yield result.value;
+      }
+    } finally {
+      if (!completed) await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+  }
+
+  const iterator = body[Symbol.asyncIterator]();
+  let completed = false;
+  try {
+    while (true) {
+      const result = await nextWithTimeout(iterator.next(), options);
+      if (result.done) {
+        completed = true;
+        return;
+      }
+      yield result.value;
+    }
+  } finally {
+    // A generic async iterator has no standard abort primitive. Invoke return
+    // best-effort without awaiting an implementation blocked in next().
+    if (!completed) void iterator.return?.().catch(() => undefined);
+  }
+}
+
+class ChunkQueue {
+  private readonly chunks: Array<{ bytes: Uint8Array; offset: number }> = [];
+  length = 0;
+
+  push(bytes: Uint8Array): void {
+    if (bytes.byteLength === 0) return;
+    this.chunks.push({ bytes, offset: 0 });
+    this.length += bytes.byteLength;
+  }
+
+  peek(length: number): Uint8Array {
+    const first = this.chunks[0];
+    if (!first || length > this.length) throw new Error("Insufficient buffered EventStream data");
+    if (first.bytes.byteLength - first.offset >= length) {
+      return first.bytes.subarray(first.offset, first.offset + length);
+    }
+    return this.copy(length, false);
+  }
+
+  read(length: number): Uint8Array {
+    return this.copy(length, true);
+  }
+
+  private copy(length: number, consume: boolean): Uint8Array {
+    if (length > this.length) throw new Error("Insufficient buffered EventStream data");
+    const output = new Uint8Array(length);
+    let written = 0;
+    let chunkIndex = 0;
+    while (written < length) {
+      const chunk = this.chunks[chunkIndex]!;
+      const available = chunk.bytes.byteLength - chunk.offset;
+      const count = Math.min(available, length - written);
+      output.set(chunk.bytes.subarray(chunk.offset, chunk.offset + count), written);
+      written += count;
+      if (consume) {
+        chunk.offset += count;
+        this.length -= count;
+        if (chunk.offset === chunk.bytes.byteLength) this.chunks.shift();
+      } else {
+        chunkIndex++;
+      }
+    }
+    return output;
+  }
 }
 
 function parsePayload(payload: Uint8Array): Record<string, unknown> {
@@ -151,19 +251,30 @@ function parsePayload(payload: Uint8Array): Record<string, unknown> {
 /** Decode and CRC-check an AWS EventStream response incrementally. */
 export async function* decodeEventStream(
   body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
+  options: EventStreamDecodeOptions = {},
 ): AsyncGenerator<KiroWireEvent> {
-  let buffered: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
-  for await (const chunk of bodyChunks(body)) {
-    buffered = concat(buffered, chunk);
+  const maxFrameBytes = options.maxFrameBytes ?? MAX_EVENTSTREAM_FRAME_BYTES;
+  const maxHeaderBytes = options.maxHeaderBytes ?? MAX_EVENTSTREAM_HEADER_BYTES;
+  const buffered = new ChunkQueue();
+
+  for await (const chunk of bodyChunks(body, options)) {
+    buffered.push(chunk);
     while (buffered.length >= 12) {
-      const totalLength = uint32(buffered, 0);
-      const headersLength = uint32(buffered, 4);
+      const prelude = buffered.peek(12);
+      const totalLength = uint32(prelude, 0);
+      const headersLength = uint32(prelude, 4);
       if (totalLength < 16 || headersLength > totalLength - 16) {
         throw new Error("Malformed AWS EventStream frame length");
       }
+      if (totalLength > maxFrameBytes) {
+        throw new Error(`AWS EventStream frame exceeded the ${maxFrameBytes}-byte limit`);
+      }
+      if (headersLength > maxHeaderBytes) {
+        throw new Error(`AWS EventStream headers exceeded the ${maxHeaderBytes}-byte limit`);
+      }
       if (buffered.length < totalLength) break;
 
-      const frame = buffered.subarray(0, totalLength);
+      const frame = buffered.read(totalLength);
       const expectedPreludeCrc = uint32(frame, 8);
       if (crc32(frame.subarray(0, 8)) !== expectedPreludeCrc) {
         throw new Error("AWS EventStream prelude CRC mismatch");
@@ -185,7 +296,6 @@ export async function* decodeEventStream(
         throw new Error(`${eventType || "KiroStreamException"}: ${detail}`);
       }
       if (eventType) yield { type: eventType, payload, headers };
-      buffered = buffered.slice(totalLength);
     }
   }
   if (buffered.length > 0) throw new Error("Kiro EventStream ended with a truncated frame");

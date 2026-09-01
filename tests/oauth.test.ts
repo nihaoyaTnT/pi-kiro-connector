@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AuthInteraction } from "@earendil-works/pi-ai";
+import type { ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import {
   accountAuthHeaders,
   accountRequestAuth,
@@ -22,6 +22,7 @@ import {
 import { createKiroProvider } from "../src/provider.ts";
 
 const profileArn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
+const signal = new AbortController().signal;
 
 function builderCredential(): KiroBuilderIdCredential {
   return {
@@ -177,6 +178,18 @@ test("refreshes Builder ID tokens and preserves rotated credential metadata", as
   assert.equal(refreshed.machineId, builderCredential().machineId);
 });
 
+test("does not replay OAuth token refresh after a network failure", async () => {
+  let calls = 0;
+  await assert.rejects(
+    refreshBuilderId(builderCredential(), undefined, async () => {
+      calls++;
+      throw new Error("token exchange connection lost");
+    }),
+    /token exchange connection lost/,
+  );
+  assert.equal(calls, 1);
+});
+
 test("encodes only non-refresh Builder ID metadata for the local stream adapter", async () => {
   const credential = builderCredential();
   const headers = builderIdAuthHeaders(credential);
@@ -256,11 +269,9 @@ test("completes IAM Identity Center authorization with PKCE and discovers a prof
   });
   const profileRequests = requests.filter((request) => request.url.endsWith("/ListAvailableProfiles"));
   assert.deepEqual(profileRequests.map((request) => request.url), [
-    "https://codewhisperer.us-east-1.amazonaws.com/ListAvailableProfiles",
-    "https://q.eu-central-1.amazonaws.com/ListAvailableProfiles",
+    "https://q.ap-southeast-2.amazonaws.com/ListAvailableProfiles",
   ]);
-  assert.equal(profileRequests.at(-1)?.headers.get("authorization"), "Bearer enterprise_access");
-  assert.ok(requests.every((request) => !request.url.startsWith("https://q.ap-southeast-2.")));
+  assert.equal(profileRequests[0]?.headers.get("authorization"), "Bearer enterprise_access");
 });
 
 test("rejects unsafe IAM Identity Center input and mismatched callbacks", async () => {
@@ -402,7 +413,8 @@ test("the provider drives the IAM Identity Center login prompts without exposing
   const promptTypes: string[] = [];
   const displayed: string[] = [];
   let callbackState = "";
-  const interaction: AuthInteraction = {
+  const interaction: ProviderAuthInteraction = {
+    signal,
     notify(event) {
       displayed.push(JSON.stringify(event));
       if (event.type === "auth_url") {
@@ -467,7 +479,8 @@ test("the provider drives the IAM Identity Center login prompts without exposing
 test("the Builder ID login flow reports a device code without exposing tokens", async () => {
   const events: string[] = [];
   const requests: string[] = [];
-  const interaction: AuthInteraction = {
+  const interaction: ProviderAuthInteraction = {
+    signal,
     notify(event) {
       events.push(JSON.stringify(event));
     },

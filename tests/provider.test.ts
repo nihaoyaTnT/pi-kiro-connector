@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type {
   AuthContext,
-  AuthInteraction,
+  ModelsPublication,
+  ProviderAuthInteraction,
   ModelsStoreEntry,
-  ProviderModelsStore,
+  RefreshModelsContext,
 } from "@earendil-works/pi-ai";
 import type {
   KiroBuilderIdCredential,
@@ -19,19 +20,27 @@ function authContext(values: Record<string, string | undefined>): AuthContext {
   };
 }
 
-class MemoryStore implements ProviderModelsStore {
+const signal = new AbortController().signal;
+
+class MemoryStore {
   entry?: ModelsStoreEntry;
 
-  async read(): Promise<ModelsStoreEntry | undefined> {
-    return this.entry;
-  }
-
-  async write(entry: ModelsStoreEntry): Promise<void> {
-    this.entry = entry;
-  }
-
-  async delete(): Promise<void> {
-    this.entry = undefined;
+  context(
+    credential: RefreshModelsContext["credential"],
+    allowNetwork = true,
+  ): RefreshModelsContext {
+    return {
+      credential,
+      stored: this.entry,
+      allowNetwork,
+      signal,
+      publish: async (publication: ModelsPublication) => {
+        if (publication.persist === null) this.entry = undefined;
+        else if (publication.persist !== undefined) this.entry = publication.persist;
+        publication.update?.();
+        return true;
+      },
+    };
   }
 }
 
@@ -39,6 +48,7 @@ test("resolves ambient Kiro credentials without retaining the region suffix in t
   const provider = createKiroProvider();
   const result = await provider.auth.apiKey?.resolve({
     ctx: authContext({ KIRO_API_KEY: "ksk_example|eu-west-1" }),
+    signal,
   });
 
   assert.equal(result?.auth.apiKey, "ksk_example");
@@ -49,7 +59,8 @@ test("resolves ambient Kiro credentials without retaining the region suffix in t
 test("the Pi login flow stores a parsed key and region without displaying the key", async () => {
   const provider = createKiroProvider();
   const notifications: string[] = [];
-  const interaction: AuthInteraction = {
+  const interaction: ProviderAuthInteraction = {
+    signal,
     prompt: async () => "ksk_login_example|ap-southeast-1",
     notify: (event) => {
       if (event.type === "info" || event.type === "progress") notifications.push(event.message);
@@ -89,7 +100,7 @@ test("refreshes Builder ID models and caches no OAuth credentials", async () => 
   };
 
   try {
-    await provider.refreshModels?.({ credential, store, allowNetwork: true });
+    await provider.refreshModels?.(store.context(credential));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -125,7 +136,7 @@ test("refreshes IAM Identity Center models without caching enterprise metadata",
   };
 
   try {
-    await provider.refreshModels?.({ credential, store, allowNetwork: true });
+    await provider.refreshModels?.(store.context(credential));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -157,15 +168,13 @@ test("refreshes and caches only public model metadata", async () => {
     });
 
   try {
-    await provider.refreshModels?.({
-      credential: {
+    await provider.refreshModels?.(
+      store.context({
         type: "api_key",
         key: "ksk_cache_example",
         env: { KIRO_REGION: "us-east-1" },
-      },
-      store,
-      allowNetwork: true,
-    });
+      }),
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

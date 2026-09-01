@@ -47,6 +47,23 @@ test("translates system, image, inference, and tool definitions", () => {
   assert.doesNotMatch(JSON.stringify(specification?.inputSchema.json), /additionalProperties/);
 });
 
+test("uses the hashed Pi session id to isolate upstream conversations", () => {
+  const context: Context = {
+    systemPrompt: "same",
+    messages: [{ role: "user", content: "same", timestamp: now }],
+  };
+  const first = translateContext("claude-sonnet-4.6", context, { sessionId: "session-a" })
+    .payload.conversationState.conversationId;
+  const repeated = translateContext("claude-sonnet-4.6", context, { sessionId: "session-a" })
+    .payload.conversationState.conversationId;
+  const second = translateContext("claude-sonnet-4.6", context, { sessionId: "session-b" })
+    .payload.conversationState.conversationId;
+
+  assert.equal(first, repeated);
+  assert.notEqual(first, second);
+  assert.doesNotMatch(first, /session-a/);
+});
+
 test("keeps only the active assistant tool turn structured", () => {
   const context: Context = {
     messages: [

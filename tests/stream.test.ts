@@ -8,7 +8,12 @@ import {
   INTERNAL_PROFILE_ARN,
 } from "../src/auth.ts";
 import { encodeEventStreamFrame } from "../src/eventstream.ts";
-import { streamKiro } from "../src/stream.ts";
+import {
+  MAX_PENDING_TOOL_INPUT_BYTES,
+  MAX_PENDING_TOOLS,
+  MAX_TOOL_INPUT_BYTES,
+  streamKiro,
+} from "../src/stream.ts";
 
 const model: Model<"kiro-runtime"> = {
   id: "claude-sonnet-4.6",
@@ -127,6 +132,85 @@ test("assembles fragmented Kiro tool input and emits a Pi tool call", async () =
       arguments: { path: "README.md" },
     },
   ]);
+});
+
+test("assembles interleaved Kiro tool calls in source order", async () => {
+  const fetcher: typeof fetch = async () =>
+    responseWithFrames(
+      encodeEventStreamFrame("toolUseEvent", {
+        toolUseId: "toolu_a",
+        name: "read",
+        input: '{"path":',
+      }),
+      encodeEventStreamFrame("toolUseEvent", {
+        toolUseId: "toolu_b",
+        name: "grep",
+        input: '{"pattern":"TODO"}',
+        stop: true,
+      }),
+      encodeEventStreamFrame("toolUseEvent", {
+        toolUseId: "toolu_a",
+        name: "read",
+        input: '"README.md"}',
+        stop: true,
+      }),
+    );
+  const result = await streamKiro(model, context, { apiKey: "ksk_example", fetch: fetcher }).result();
+
+  assert.equal(result.stopReason, "toolUse");
+  assert.deepEqual(result.content, [
+    { type: "toolCall", id: "toolu_a", name: "read", arguments: { path: "README.md" } },
+    { type: "toolCall", id: "toolu_b", name: "grep", arguments: { pattern: "TODO" } },
+  ]);
+});
+
+test("rejects oversized cumulative tool input", async () => {
+  const fetcher: typeof fetch = async () =>
+    responseWithFrames(
+      encodeEventStreamFrame("toolUseEvent", {
+        toolUseId: "toolu_large",
+        name: "read",
+        input: "x".repeat(MAX_TOOL_INPUT_BYTES + 1),
+      }),
+    );
+  const result = await streamKiro(model, context, { apiKey: "ksk_example", fetch: fetcher }).result();
+
+  assert.equal(result.stopReason, "error");
+  assert.match(result.errorMessage ?? "", /tool input exceeded the 1048576-byte limit/);
+  assert.deepEqual(result.content, []);
+});
+
+test("rejects excessive concurrent tool calls", async () => {
+  const frames = Array.from({ length: MAX_PENDING_TOOLS + 1 }, (_, index) =>
+    encodeEventStreamFrame("toolUseEvent", {
+      toolUseId: `toolu_${index}`,
+      name: `tool_${index}`,
+    }),
+  );
+  const fetcher: typeof fetch = async () => responseWithFrames(...frames);
+  const result = await streamKiro(model, context, { apiKey: "ksk_example", fetch: fetcher }).result();
+
+  assert.equal(result.stopReason, "error");
+  assert.match(result.errorMessage ?? "", /more than 64 pending tool calls/);
+});
+
+test("rejects excessive total pending tool input", async () => {
+  const fragment = `"${"x".repeat(MAX_TOOL_INPUT_BYTES - 2)}"`;
+  const frames = Array.from({ length: 5 }, (_, index) =>
+    encodeEventStreamFrame("toolUseEvent", {
+      toolUseId: `toolu_budget_${index}`,
+      name: `tool_${index}`,
+      input: fragment,
+    }),
+  );
+  const fetcher: typeof fetch = async () => responseWithFrames(...frames);
+  const result = await streamKiro(model, context, { apiKey: "ksk_example", fetch: fetcher }).result();
+
+  assert.equal(result.stopReason, "error");
+  assert.match(
+    result.errorMessage ?? "",
+    new RegExp(`pending tool inputs exceeded the ${MAX_PENDING_TOOL_INPUT_BYTES}-byte limit`),
+  );
 });
 
 test("reports missing credentials and cancellation as terminal errors", async () => {

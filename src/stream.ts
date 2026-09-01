@@ -19,10 +19,18 @@ interface PendingTool {
   id: string;
   name: string;
   input: string;
+  inputBytes: number;
   generatedId: boolean;
+  complete: boolean;
 }
 
 type OutputBlock = TextContent | ThinkingContent | ToolCall;
+
+const MAX_USAGE_OBJECTS = 10_000;
+export const MAX_PENDING_TOOLS = 64;
+export const MAX_TOOL_INPUT_BYTES = 1024 * 1024;
+export const MAX_PENDING_TOOL_INPUT_BYTES = 4 * 1024 * 1024;
+const textEncoder = new TextEncoder();
 
 const EMPTY_USAGE = () => ({
   input: 0,
@@ -55,13 +63,21 @@ function numberField(value: Record<string, unknown>, ...keys: string[]): number 
   return undefined;
 }
 
-function usageObjects(value: unknown, output: Record<string, unknown>[] = []): Record<string, unknown>[] {
-  if (Array.isArray(value)) {
-    for (const child of value) usageObjects(child, output);
-  } else if (value && typeof value === "object") {
-    const object = value as Record<string, unknown>;
+function usageObjects(value: unknown): Record<string, unknown>[] {
+  const output: Record<string, unknown>[] = [];
+  const pending: unknown[] = [value];
+  const seen = new WeakSet<object>();
+  while (pending.length > 0 && output.length < MAX_USAGE_OBJECTS) {
+    const current = pending.pop();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    const object = current as Record<string, unknown>;
     output.push(object);
-    for (const child of Object.values(object)) usageObjects(child, output);
+    pending.push(...Object.values(object));
   }
   return output;
 }
@@ -135,7 +151,8 @@ export function streamKiro(
 
   void (async () => {
     let openText: { kind: "text" | "thinking"; index: number } | undefined;
-    let pendingTool: PendingTool | undefined;
+    const pendingTools: PendingTool[] = [];
+    let pendingToolInputBytes = 0;
     let emitted = false;
     let sawTool = false;
 
@@ -185,8 +202,7 @@ export function streamKiro(
       emitted = true;
     };
 
-    const finishTool = (): void => {
-      if (!pendingTool) return;
+    const emitTool = (pendingTool: PendingTool): void => {
       closeText();
       let arguments_: Record<string, unknown> = {};
       if (pendingTool.input.trim()) {
@@ -209,9 +225,85 @@ export function streamKiro(
       const delta = JSON.stringify(arguments_);
       if (delta) stream.push({ type: "toolcall_delta", contentIndex: index, delta, partial: output });
       stream.push({ type: "toolcall_end", contentIndex: index, toolCall, partial: output });
-      pendingTool = undefined;
       emitted = true;
       sawTool = true;
+    };
+
+    const flushTools = (force = false): void => {
+      if (force) {
+        for (const pendingTool of pendingTools) pendingTool.complete = true;
+      }
+      while (pendingTools[0]?.complete) {
+        const pendingTool = pendingTools.shift()!;
+        pendingToolInputBytes -= pendingTool.inputBytes;
+        emitTool(pendingTool);
+      }
+    };
+
+    const setToolInput = (pendingTool: PendingTool, value: unknown): void => {
+      let input: string;
+      let inputBytes: number;
+      if (typeof value === "string") {
+        input = pendingTool.input + value;
+        inputBytes = pendingTool.inputBytes + textEncoder.encode(value).byteLength;
+      } else if (value && typeof value === "object" && !Array.isArray(value)) {
+        input = JSON.stringify(value);
+        inputBytes = textEncoder.encode(input).byteLength;
+      } else {
+        return;
+      }
+
+      if (inputBytes > MAX_TOOL_INPUT_BYTES) {
+        throw new Error(`Kiro tool input exceeded the ${MAX_TOOL_INPUT_BYTES}-byte limit`);
+      }
+      const totalBytes = pendingToolInputBytes - pendingTool.inputBytes + inputBytes;
+      if (totalBytes > MAX_PENDING_TOOL_INPUT_BYTES) {
+        throw new Error(
+          `Kiro pending tool inputs exceeded the ${MAX_PENDING_TOOL_INPUT_BYTES}-byte limit`,
+        );
+      }
+      pendingTool.input = input;
+      pendingToolInputBytes = totalBytes;
+      pendingTool.inputBytes = inputBytes;
+    };
+
+    const pendingToolFor = (id: string, name: string): PendingTool | undefined => {
+      let pendingTool = id
+        ? pendingTools.find((candidate) => !candidate.generatedId && candidate.id === id)
+        : undefined;
+      if (!pendingTool && id) {
+        pendingTool = pendingTools.find(
+          (candidate) => candidate.generatedId && (!name || candidate.name === name),
+        );
+        if (pendingTool) {
+          pendingTool.id = id;
+          pendingTool.generatedId = false;
+        }
+      }
+      if (!pendingTool && !id && name) {
+        for (let index = pendingTools.length - 1; index >= 0; index--) {
+          const candidate = pendingTools[index]!;
+          if (!candidate.complete && candidate.name === name) {
+            pendingTool = candidate;
+            break;
+          }
+        }
+      }
+      if (!pendingTool && name) {
+        if (pendingTools.length >= MAX_PENDING_TOOLS) {
+          throw new Error(`Kiro returned more than ${MAX_PENDING_TOOLS} pending tool calls`);
+        }
+        pendingTool = {
+          id: id || `toolu_${crypto.randomUUID()}`,
+          name,
+          input: "",
+          inputBytes: 0,
+          generatedId: !id,
+          complete: false,
+        };
+        pendingTools.push(pendingTool);
+      }
+      return pendingTool;
     };
 
     const requestOptions = options ?? {};
@@ -219,6 +311,7 @@ export function streamKiro(
       maxTokens: requestOptions.maxTokens,
       temperature: requestOptions.temperature,
       reasoning: requestOptions.reasoning,
+      sessionId: requestOptions.sessionId,
     });
 
     try {
@@ -243,46 +336,30 @@ export function streamKiro(
         onResponse: requestOptions.onResponse
           ? (response) => requestOptions.onResponse!(response, model)
           : undefined,
+        timeoutMs: requestOptions.timeoutMs,
+        maxRetries: requestOptions.maxRetries,
+        maxRetryDelayMs: requestOptions.maxRetryDelayMs,
       })) {
         updateUsage(output, event.payload);
         if (event.type === "assistantResponseEvent") {
-          finishTool();
+          flushTools(true);
           appendText("text", stringField(event.payload, "content"));
         } else if (event.type === "reasoningContentEvent") {
-          finishTool();
+          flushTools(true);
           appendText("thinking", stringField(event.payload, "text"));
         } else if (event.type === "toolUseEvent") {
           closeText();
           const id = stringField(event.payload, "toolUseId", "toolUseID", "tool_use_id", "id");
           const name = stringField(event.payload, "name", "toolName", "tool_name");
-          if (pendingTool && name && pendingTool.name !== name) finishTool();
-          if (pendingTool && id && pendingTool.id !== id) {
-            if (pendingTool.generatedId && (!name || pendingTool.name === name)) {
-              pendingTool.id = id;
-              pendingTool.generatedId = false;
-            } else {
-              finishTool();
-            }
-          }
-          if (!pendingTool && name) {
-            pendingTool = {
-              id: id || `toolu_${crypto.randomUUID()}`,
-              name,
-              input: "",
-              generatedId: !id,
-            };
-          }
+          const pendingTool = pendingToolFor(id, name);
           if (pendingTool) {
-            const input = event.payload.input;
-            if (typeof input === "string") pendingTool.input += input;
-            else if (input && typeof input === "object" && !Array.isArray(input)) {
-              pendingTool.input = JSON.stringify(input);
-            }
-            if (boolField(event.payload, "stop", "isStop", "done")) finishTool();
+            setToolInput(pendingTool, event.payload.input);
+            if (boolField(event.payload, "stop", "isStop", "done")) pendingTool.complete = true;
+            flushTools();
           }
         }
       }
-      finishTool();
+      flushTools(true);
       closeText();
       if (requestOptions.signal?.aborted) {
         throw requestOptions.signal.reason ?? new Error("Request aborted");
@@ -294,12 +371,9 @@ export function streamKiro(
       stream.push({ type: "done", reason: output.stopReason, message: output });
       stream.end(output);
     } catch (error) {
-      try {
-        finishTool();
-        closeText();
-      } catch {
-        // Keep the original failure when cleanup cannot parse an incomplete tool fragment.
-      }
+      // Never force incomplete tool fragments into executable calls while handling
+      // a protocol, cancellation, or resource-limit failure.
+      closeText();
       output.stopReason = requestOptions.signal?.aborted ? "aborted" : "error";
       output.errorMessage = errorText(error);
       calculateCost(model, output.usage);

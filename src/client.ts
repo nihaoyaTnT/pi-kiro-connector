@@ -10,6 +10,14 @@ import {
   runtimeUrl,
 } from "./config.ts";
 import { decodeEventStream, type KiroWireEvent } from "./eventstream.ts";
+import {
+  MAX_ERROR_BODY_BYTES,
+  MAX_JSON_BODY_BYTES,
+  readBoundedText,
+  readJsonObject,
+  requestWithRetry,
+  type RequestPolicy,
+} from "./http.ts";
 import { toModelConfig, type DiscoveredModel, type KiroModelConfig } from "./models.ts";
 import type { KiroPayload } from "./translate.ts";
 
@@ -19,6 +27,8 @@ export interface KiroModelResponse {
   supportedInputTypes?: unknown;
   tokenLimits?: { maxInputTokens?: unknown; maxOutputTokens?: unknown };
 }
+
+const MAX_MODEL_PAGES = 20;
 
 function endpoint(auth: KiroRequestAuth): string {
   return auth.type === "api_key" ? runtimeUrl(auth.region) : builderIdRuntimeUrl(auth.profileArn);
@@ -47,15 +57,20 @@ function safeErrorBody(text: string, secrets: readonly string[] = []): string {
   return normalized.length > 500 ? `${normalized.slice(0, 500)}…` : normalized;
 }
 
-export function headersForAuth(auth: KiroRequestAuth): Record<string, string> {
+export function headersForAuth(
+  auth: KiroRequestAuth,
+  attempt = 1,
+  maxAttempts = 1,
+  invocationId = randomUUID(),
+): Record<string, string> {
   return {
     ...baseHeaders(auth, true),
     Accept: "*/*",
     "Content-Type": auth.type === "api_key" ? "application/x-amz-json-1.0" : "application/json",
     ...(auth.type === "api_key" ? { "X-Amz-Target": KIRO_STREAMING_TARGET } : {}),
     ...(auth.type === "account" ? { "x-amzn-kiro-agent-mode": "vibe" } : {}),
-    "Amz-Sdk-Request": "attempt=1; max=1",
-    "Amz-Sdk-Invocation-Id": randomUUID(),
+    "Amz-Sdk-Request": `attempt=${attempt}; max=${maxAttempts}`,
+    "Amz-Sdk-Invocation-Id": invocationId,
   };
 }
 
@@ -96,25 +111,52 @@ export async function* generateAssistantResponse(input: {
   payload: KiroPayload;
   signal?: AbortSignal;
   fetch?: FetchFunction;
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
   onResponse?: (response: ProviderResponse) => void | Promise<void>;
 }): AsyncGenerator<KiroWireEvent> {
-  const fetcher = input.fetch ?? globalThis.fetch;
-  const response = await fetcher(endpoint(input.auth), {
-    method: "POST",
-    headers: headersForAuth(input.auth),
-    body: JSON.stringify(payloadForAuth(input.payload, input.auth)),
+  const invocationId = randomUUID();
+  const policy: RequestPolicy = {
     signal: input.signal,
+    timeoutMs: input.timeoutMs,
+    maxRetries: input.maxRetries,
+    maxRetryDelayMs: input.maxRetryDelayMs,
+    retryNetworkErrors: false,
+    action: "Kiro Runtime request",
+  };
+  const response = await requestWithRetry({
+    fetch: input.fetch,
+    url: endpoint(input.auth),
+    policy,
+    init: (attempt, maxAttempts) => ({
+      method: "POST",
+      headers: headersForAuth(input.auth, attempt, maxAttempts, invocationId),
+      body: JSON.stringify(payloadForAuth(input.payload, input.auth)),
+    }),
   });
   await input.onResponse?.({
     status: response.status,
     headers: Object.fromEntries(response.headers.entries()),
   });
   if (!response.ok) {
-    const detail = safeErrorBody(await response.text(), [input.auth.token]);
+    const detail = safeErrorBody(
+      await readBoundedText(
+        response,
+        MAX_ERROR_BODY_BYTES,
+        "Kiro Runtime error response",
+        input.timeoutMs,
+        input.signal,
+      ),
+      [input.auth.token],
+    );
     throw new Error(`Kiro Runtime request failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
   }
   if (!response.body) throw new Error("Kiro Runtime returned an empty response body");
-  yield* decodeEventStream(response.body);
+  yield* decodeEventStream(response.body, {
+    signal: input.signal,
+    idleTimeoutMs: input.timeoutMs,
+  });
 }
 
 function discoveredModel(model: KiroModelResponse): DiscoveredModel | undefined {
@@ -141,25 +183,72 @@ export async function discoverModels(input: {
   auth: KiroRequestAuth;
   signal?: AbortSignal;
   fetch?: FetchFunction;
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
 }): Promise<KiroModelConfig[]> {
-  const response = await (input.fetch ?? globalThis.fetch)(catalogUrl(input.auth), {
-    headers: {
-      ...baseHeaders(input.auth, false),
-      Accept: "application/json",
-    },
-    signal: input.signal,
-  });
-  if (!response.ok) {
-    const detail = safeErrorBody(await response.text(), [input.auth.token]);
-    throw new Error(`Kiro model discovery failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+  const discovered: DiscoveredModel[] = [];
+  const pageTokens = new Set<string>();
+  let nextToken: string | undefined;
+
+  for (let page = 0; page < MAX_MODEL_PAGES; page++) {
+    const url = new URL(catalogUrl(input.auth));
+    if (nextToken) url.searchParams.set("nextToken", nextToken);
+    const response = await requestWithRetry({
+      fetch: input.fetch,
+      url: url.toString(),
+      policy: {
+        signal: input.signal,
+        timeoutMs: input.timeoutMs,
+        maxRetries: input.maxRetries,
+        maxRetryDelayMs: input.maxRetryDelayMs,
+        action: "Kiro model discovery",
+      },
+      init: () => ({
+        headers: {
+          ...baseHeaders(input.auth, false),
+          Accept: "application/json",
+        },
+      }),
+    });
+    if (!response.ok) {
+      const detail = safeErrorBody(
+        await readBoundedText(
+          response,
+          MAX_ERROR_BODY_BYTES,
+          "Kiro model discovery error response",
+          input.timeoutMs,
+          input.signal,
+        ),
+        [input.auth.token],
+      );
+      throw new Error(`Kiro model discovery failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+    }
+    const body = await readJsonObject(
+      response,
+      "Kiro model discovery",
+      MAX_JSON_BODY_BYTES,
+      input.timeoutMs,
+      input.signal,
+    );
+    if (!Array.isArray(body.models)) throw new Error("Kiro model discovery returned an invalid response");
+    discovered.push(
+      ...body.models
+        .map((value) => discoveredModel(value as KiroModelResponse))
+        .filter((value): value is DiscoveredModel => value !== undefined),
+    );
+
+    nextToken = typeof body.nextToken === "string" && body.nextToken.trim()
+      ? body.nextToken.trim()
+      : undefined;
+    if (!nextToken) break;
+    if (pageTokens.has(nextToken)) throw new Error("Kiro model discovery returned a repeated page token");
+    pageTokens.add(nextToken);
   }
-  const body = (await response.json()) as { models?: unknown };
-  if (!Array.isArray(body.models)) throw new Error("Kiro model discovery returned an invalid response");
+  if (nextToken) throw new Error(`Kiro model discovery exceeded ${MAX_MODEL_PAGES} pages`);
 
   const seen = new Set<string>();
-  return body.models
-    .map((value) => discoveredModel(value as KiroModelResponse))
-    .filter((value): value is DiscoveredModel => value !== undefined)
+  return discovered
     .map(toModelConfig)
     .filter((value): value is KiroModelConfig => value !== undefined)
     .filter((model) => {

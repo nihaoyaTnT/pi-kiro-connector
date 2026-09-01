@@ -36,3 +36,42 @@ test("rejects CRC corruption and truncated frames", async () => {
   const truncated = encodeEventStreamFrame("assistantResponseEvent", { content: "hello" }).slice(0, -2);
   await assert.rejects(() => collect([truncated]), /truncated frame/);
 });
+
+test("rejects oversized frames before buffering their declared body", async () => {
+  const prelude = new Uint8Array(12);
+  const view = new DataView(prelude.buffer);
+  view.setUint32(0, 1024, false);
+  view.setUint32(4, 0, false);
+  async function* source() {
+    yield prelude;
+  }
+
+  await assert.rejects(
+    async () => {
+      for await (const _event of decodeEventStream(source(), { maxFrameBytes: 100 })) {
+        // consume
+      }
+    },
+    /frame exceeded the 100-byte limit/,
+  );
+});
+
+test("cancels an EventStream that remains idle", async () => {
+  let cancelled = false;
+  const source = new ReadableStream<Uint8Array>({
+    pull: () => new Promise(() => undefined),
+    cancel: () => {
+      cancelled = true;
+    },
+  });
+
+  await assert.rejects(
+    async () => {
+      for await (const _event of decodeEventStream(source, { idleTimeoutMs: 10 })) {
+        // consume
+      }
+    },
+    /idle for 10ms/,
+  );
+  assert.equal(cancelled, true);
+});

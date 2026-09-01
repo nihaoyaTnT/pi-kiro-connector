@@ -20,7 +20,7 @@ A [Pi](https://pi.dev) package that adds native Kiro Runtime access with model d
 ## Requirements
 
 1. Node.js 22.19.0 or newer
-2. Pi 0.83.0 or newer
+2. Pi 0.84.4 or newer
 3. An AWS Builder ID or IAM Identity Center account authorized for Kiro, or a Kiro API key typically beginning with `ksk_`
 
 Use only credentials and services you are authorized to access.
@@ -140,9 +140,9 @@ https://runtime.<region>.kiro.dev/
 
 AWS Builder ID uses AWS OIDC device authorization. IAM Identity Center uses the company's AWS Access Portal issuer with an authorization-code flow protected by PKCE and `state`. Pi stores the access token, refresh token, registered client metadata, authentication metadata, and optional Kiro profile ARN as one OAuth credential; access tokens are refreshed before expiry. Neither the identity-provider type nor the company Start URL is forwarded in inference requests.
 
-Model metadata is discovered through the account's regional model-catalog operation. Responses use binary AWS EventStream framing; the connector incrementally validates frame CRCs and maps text, reasoning, usage, and tool events into Pi's native stream protocol.
+Model metadata is discovered through the account's regional model-catalog operation. Responses use bounded, idle-timed AWS EventStream framing; the connector incrementally validates frame CRCs and maps text, reasoning, usage, and interleaved tool events into Pi's native stream protocol. Model discovery and pre-stream requests use bounded responses, timeouts, and limited retries for transient failures.
 
-Pi controls reasoning through `/settings`, Shift+Tab, or `--thinking`. The connector adds Kiro's reasoning prompt only when a Pi reasoning level is enabled.
+Pi controls reasoning through `/settings`, Shift+Tab, or `--thinking`. The connector adds Kiro's reasoning prompt only when a Pi reasoning level is enabled. Kiro's current protocol is treated as an on/off control, so `minimal` through `max` currently produce the same enabled behavior.
 
 Pi caches a successfully discovered model catalog through its provider model store. The stored catalog contains model metadata only. A small static catalog keeps the provider visible during offline startup.
 

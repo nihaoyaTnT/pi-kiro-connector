@@ -164,11 +164,12 @@ function convertTools(tools: Tool[] | undefined): {
   return { tools: converted, map };
 }
 
-function conversationId(modelId: string, context: Context): string {
+function conversationId(modelId: string, context: Context, sessionId?: string): string {
   const firstUser = context.messages.find((message) => message.role === "user");
   const anchor = firstUser?.role === "user" ? textAndImages(firstUser.content).text : "";
+  const identity = sessionId?.trim() || `${context.systemPrompt ?? ""}\0${anchor}`;
   const bytes = createHash("sha256")
-    .update(`${modelId}\0${context.systemPrompt ?? ""}\0${anchor}`)
+    .update(`${modelId}\0${identity}`)
     .digest()
     .subarray(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
@@ -193,7 +194,7 @@ function userMessage(
 export function translateContext(
   modelId: string,
   context: Context,
-  options: { maxTokens?: number; temperature?: number; reasoning?: string } = {},
+  options: { maxTokens?: number; temperature?: number; reasoning?: string; sessionId?: string } = {},
 ): TranslatedRequest {
   const history: KiroPayload["conversationState"]["history"] = [];
   const messages = context.messages;
@@ -318,7 +319,7 @@ export function translateContext(
       agentContinuationId: randomUUID(),
       agentTaskType: "vibe",
       chatTriggerType: "MANUAL",
-      conversationId: conversationId(modelId, context),
+      conversationId: conversationId(modelId, context, options.sessionId),
       currentMessage: { userInputMessage: current },
       ...(history.length > 0 ? { history } : {}),
     },

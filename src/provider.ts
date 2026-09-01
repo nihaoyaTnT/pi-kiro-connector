@@ -1,8 +1,8 @@
 import {
   createProvider,
   type ApiKeyCredential,
-  type AuthInteraction,
   type Model,
+  type ProviderAuthInteraction,
   type Provider,
 } from "@earendil-works/pi-ai";
 import {
@@ -35,7 +35,7 @@ function modelCatalog(): Model<typeof KIRO_API>[] {
   }));
 }
 
-async function loginKiroApiKey(interaction: AuthInteraction): Promise<ApiKeyCredential> {
+async function loginKiroApiKey(interaction: ProviderAuthInteraction): Promise<ApiKeyCredential> {
   const rawKey = await interaction.prompt({
     type: "secret",
     message: "Enter your Kiro API key (ksk_... or ksk_...|region):",

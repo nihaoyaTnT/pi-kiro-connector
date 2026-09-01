@@ -109,6 +109,105 @@ test("discovers and deduplicates native Kiro model metadata", async () => {
   assert.deepEqual(models[1]?.input, ["text"]);
 });
 
+test("paginates model discovery and retries retryable responses", async () => {
+  const urls: string[] = [];
+  let calls = 0;
+  const fetcher: typeof fetch = async (input) => {
+    urls.push(String(input));
+    calls++;
+    if (calls === 1) return new Response("busy", { status: 503, headers: { "retry-after": "0" } });
+    const token = new URL(String(input)).searchParams.get("nextToken");
+    return token
+      ? Response.json({ models: [{ modelId: "page-2" }] })
+      : Response.json({ models: [{ modelId: "page-1" }], nextToken: "second" });
+  };
+
+  const models = await discoverModels({
+    auth: apiKeyRequestAuth("ksk_example"),
+    fetch: fetcher,
+    maxRetries: 1,
+  });
+  assert.deepEqual(models.map((model) => model.id), ["page-1", "page-2"]);
+  assert.equal(calls, 3);
+  assert.equal(new URL(urls[2]!).searchParams.get("nextToken"), "second");
+});
+
+test("retries explicit Runtime statuses with one stable invocation id", async () => {
+  const requestHeaders: Headers[] = [];
+  let calls = 0;
+  const fetcher: typeof fetch = async (_input, init) => {
+    calls++;
+    requestHeaders.push(new Headers(init?.headers));
+    if (calls === 1) {
+      return new Response("busy", { status: 503, headers: { "retry-after": "0" } });
+    }
+    const frame = encodeEventStreamFrame("assistantResponseEvent", { content: "OK" });
+    return new Response(
+      frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer,
+      { status: 200 },
+    );
+  };
+
+  const events = [];
+  for await (const event of generateAssistantResponse({
+    auth: apiKeyRequestAuth("ksk_example"),
+    payload,
+    fetch: fetcher,
+    maxRetries: 1,
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(calls, 2);
+  assert.equal(events[0]?.payload.content, "OK");
+  assert.equal(requestHeaders[0]?.get("amz-sdk-request"), "attempt=1; max=2");
+  assert.equal(requestHeaders[1]?.get("amz-sdk-request"), "attempt=2; max=2");
+  assert.equal(
+    requestHeaders[0]?.get("amz-sdk-invocation-id"),
+    requestHeaders[1]?.get("amz-sdk-invocation-id"),
+  );
+});
+
+test("does not replay Runtime requests after an ambiguous network failure", async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async () => {
+    calls++;
+    throw new Error("socket closed after upload");
+  };
+
+  await assert.rejects(
+    async () => {
+      for await (const _event of generateAssistantResponse({
+        auth: apiKeyRequestAuth("ksk_example"),
+        payload,
+        fetch: fetcher,
+        maxRetries: 3,
+      })) {
+        // consume
+      }
+    },
+    /socket closed after upload/,
+  );
+  assert.equal(calls, 1);
+});
+
+test("bounds error responses before redacting them", async () => {
+  const fetcher: typeof fetch = async () =>
+    new Response("x".repeat(70 * 1024), { status: 401 });
+  await assert.rejects(
+    async () => {
+      for await (const _event of generateAssistantResponse({
+        auth: apiKeyRequestAuth("ksk_example"),
+        payload,
+        fetch: fetcher,
+      })) {
+        // consume
+      }
+    },
+    /65536-byte response limit/,
+  );
+});
+
 test("routes AWS account requests through the account data plane without leaking local metadata", async () => {
   const profileArn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/example";
   const auth: KiroRequestAuth = {

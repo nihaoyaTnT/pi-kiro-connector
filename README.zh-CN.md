@@ -20,7 +20,7 @@
 ## 前置条件
 
 1. Node.js 22.19.0 或更高版本
-2. Pi 0.83.0 或更高版本
+2. Pi 0.84.4 或更高版本
 3. 已获 Kiro 使用权限的 AWS Builder ID 或 IAM Identity Center 账号，或通常以 `ksk_` 开头的 Kiro API Key
 
 请只使用你有权使用的凭据与服务。
@@ -140,9 +140,9 @@ https://runtime.<region>.kiro.dev/
 
 AWS Builder ID 使用 AWS OIDC 设备授权。IAM Identity Center 使用公司 AWS Access Portal issuer，并通过受 PKCE 和 `state` 保护的授权码流程登录。Pi 会把 Access Token、Refresh Token、注册客户端元数据、认证元数据及可选的 Kiro Profile ARN 作为一份 OAuth 凭据保存，并在到期前自动刷新 Access Token。身份提供方类型和公司 Start URL 都不会随推理请求发送。
 
-模型元数据通过账号对应的区域模型目录获取。服务返回二进制 AWS EventStream；连接器会增量校验帧 CRC，并将文本、思考、用量和工具事件映射为 Pi 原生流协议。
+模型元数据通过账号对应的区域模型目录获取。服务返回受容量限制和空闲超时保护的二进制 AWS EventStream；连接器会增量校验帧 CRC，并将文本、思考、用量和交错工具事件映射为 Pi 原生流协议。模型发现和流开始前的请求使用有界响应读取、超时及针对瞬时故障的有限重试。
 
-Pi 通过 `/settings`、Shift+Tab 或 `--thinking` 控制思考级别。只有启用 Pi reasoning level 时，连接器才会加入 Kiro 思考提示。
+Pi 通过 `/settings`、Shift+Tab 或 `--thinking` 控制思考级别。只有启用 Pi reasoning level 时，连接器才会加入 Kiro 思考提示。当前连接器将 Kiro 协议视为开关控制，因此 `minimal` 到 `max` 目前都会产生相同的启用行为。
 
 Pi 会通过 Provider 模型存储缓存成功发现的模型目录，缓存仅包含模型元数据。内置小型目录可确保离线启动时仍能看到 Provider。
 

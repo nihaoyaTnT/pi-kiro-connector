@@ -32,11 +32,11 @@ async function resolvedAuth(ctx: ExtensionContext): Promise<{
 
 function formatStatus(result: Awaited<ReturnType<typeof probeKiro>>, source: string): string {
   return [
-    `Kiro: ${result.ok ? "connected" : "connection failed"}`,
-    `Runtime: ${result.endpoint}`,
-    `Model catalog: ${result.status || "unreachable"}`,
-    `Discovered models: ${result.modelCount}`,
+    `Kiro catalog: ${result.ok ? "reachable" : "unreachable"}`,
     `Authentication: ${source}`,
+    `Model catalog HTTP: ${result.status || "unreachable"}`,
+    `Discovered models: ${result.modelCount}`,
+    `Runtime endpoint: ${result.endpoint} (not probed)`,
     ...(result.error ? [`Error: ${result.error}`] : []),
   ].join("\n");
 }
@@ -84,7 +84,7 @@ export default function registerKiroConnector(pi: ExtensionAPI) {
   pi.registerProvider(createKiroProvider());
 
   pi.registerCommand("kiro-status", {
-    description: "Check direct Kiro authentication, connectivity, and model discovery",
+    description: "Check Kiro authentication and model-catalog connectivity",
     handler: async (_args, ctx) => {
       const { result, auth } = await status(ctx);
       ctx.ui.notify(formatStatus(result, auth.source), result.ok ? "info" : "error");
@@ -106,7 +106,7 @@ export default function registerKiroConnector(pi: ExtensionAPI) {
     name: "kiro_connection",
     label: "Kiro Connection",
     description:
-      "Check the direct Kiro connection, list registered Kiro models, or switch Pi to a Kiro model. Never returns credentials.",
+      "Check Kiro catalog connectivity, list registered Kiro models, or switch Pi to a Kiro model. Never returns credentials.",
     promptSnippet: "Check the Kiro connection, list Kiro models, or switch to a Kiro model",
     parameters: Type.Object({
       action: StringEnum(["status", "models", "use"] as const, {
