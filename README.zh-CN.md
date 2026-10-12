@@ -13,7 +13,7 @@
 - 离线启动时使用内置回退模型目录
 - 通过 `/login kiro` 支持 AWS Builder ID 与 AWS IAM Identity Center（公司 SSO）登录和 Token 自动刷新
 - 通过 `/login kiro` 或 `KIRO_API_KEY` 支持 Kiro API Key
-- 提供 `/kiro-status`、`/kiro-use` 和模型可调用的 `kiro_connection` 工具
+- 提供 `/kiro-status`、可选的真实推理健康检查、`/kiro-use` 和模型可调用的 `kiro_connection` 工具
 - 不返回或主动记录凭据
 - 除 Pi 的 peer package 外没有运行时 npm 依赖
 
@@ -113,8 +113,11 @@ pi
 ```text
 /reload
 /kiro-status
+/kiro-status --deep claude-haiku-4.5
 /kiro-use claude-sonnet-4.6
 ```
+
+`/kiro-status` 只检查认证和模型目录，不发起推理。`/kiro-status --deep [模型 ID]` 会额外发送固定提示 `Reply with OK only.`，执行最小 Runtime 推理检查。由于检查可能产生少量 Kiro 用量，Pi 在支持 UI 的模式中会先请求确认。检查不会发送当前对话、系统提示、工具或图片。未指定模型时，连接器依次优先选择 `claude-haiku-4.5`、`auto` 和首个已注册的 Kiro 模型。
 
 也可以在启动时指定模型：
 
@@ -124,11 +127,12 @@ pi --provider kiro --model claude-sonnet-4.6
 
 `kiro_connection` 工具支持：
 
-- `status`：检查认证、区域连接和模型发现
+- `status`：检查认证、区域连接、模型发现和目录延迟，不发起推理
+- `probe`：执行最小真实推理检查；必须在用户明确同意后传入 `confirmUsage: true`
 - `models`：列出已注册的 Kiro 模型 ID
 - `use`：切换到 Kiro 模型
 
-状态命令和工具只报告凭据来源、端点、状态和模型数量，不会返回 API Key 或 OAuth Token。
+状态和推理检查结果只报告凭据来源、端点、HTTP 状态、模型元数据和延迟，不会返回 API Key、OAuth Token 或模型输出。
 
 ## 工作原理
 

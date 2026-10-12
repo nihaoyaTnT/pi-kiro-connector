@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { apiKeyRequestAuth, type KiroRequestAuth } from "../src/auth.ts";
-import { discoverModels, generateAssistantResponse, requestHeaders } from "../src/client.ts";
+import {
+  discoverModels,
+  generateAssistantResponse,
+  probeKiroRuntime,
+  requestHeaders,
+} from "../src/client.ts";
 import { encodeEventStreamFrame } from "../src/eventstream.ts";
 import type { KiroPayload } from "../src/translate.ts";
 
@@ -268,6 +273,57 @@ test("discovers AWS account models through the profile data plane", async () => 
 
   const models = await discoverModels({ auth, fetch: fetcher });
   assert.deepEqual(models.map((model) => model.id), ["account-model"]);
+});
+
+test("runs a minimal inference probe without conversation content", async () => {
+  let sent: KiroPayload | undefined;
+  const fetcher: typeof fetch = async (_input, init) => {
+    sent = JSON.parse(String(init?.body)) as KiroPayload;
+    const frame = encodeEventStreamFrame("assistantResponseEvent", { content: "OK" });
+    return new Response(
+      frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer,
+      { status: 200 },
+    );
+  };
+
+  const result = await probeKiroRuntime({
+    auth: apiKeyRequestAuth("ksk_example|eu-central-1"),
+    modelId: "claude-haiku-4.5",
+    fetch: fetcher,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.endpoint, "https://runtime.eu-central-1.kiro.dev/");
+  assert.equal(result.modelId, "claude-haiku-4.5");
+  assert.equal(result.status, 200);
+  assert.equal(result.receivedOutput, true);
+  assert.ok((result.firstEventMs ?? -1) >= 0);
+  assert.ok(result.durationMs >= 0);
+  assert.equal(sent?.conversationState.currentMessage.userInputMessage.content, "Reply with OK only.");
+  assert.equal(sent?.conversationState.currentMessage.userInputMessage.modelId, "claude-haiku-4.5");
+  assert.equal(sent?.conversationState.history, undefined);
+  assert.deepEqual(sent?.inferenceConfig, { maxTokens: 16, temperature: 0 });
+});
+
+test("reports an inference probe that returns no assistant text", async () => {
+  const fetcher: typeof fetch = async () => {
+    const frame = encodeEventStreamFrame("metadataEvent", { usage: { inputTokens: 5 } });
+    return new Response(
+      frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer,
+      { status: 200 },
+    );
+  };
+
+  const result = await probeKiroRuntime({
+    auth: apiKeyRequestAuth("ksk_example"),
+    modelId: "auto",
+    fetch: fetcher,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 200);
+  assert.equal(result.receivedOutput, false);
+  assert.match(result.error ?? "", /no assistant text output/);
 });
 
 test("does not echo credentials in upstream errors", async () => {

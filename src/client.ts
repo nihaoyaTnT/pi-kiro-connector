@@ -263,7 +263,101 @@ export interface RuntimeProbe {
   endpoint: string;
   status: number;
   modelCount: number;
+  durationMs: number;
   error?: string;
+}
+
+export interface InferenceProbe {
+  ok: boolean;
+  endpoint: string;
+  modelId: string;
+  status: number;
+  receivedOutput: boolean;
+  firstEventMs?: number;
+  durationMs: number;
+  error?: string;
+}
+
+function elapsedMilliseconds(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
+}
+
+function inferenceProbePayload(modelId: string): KiroPayload {
+  return {
+    conversationState: {
+      agentContinuationId: randomUUID(),
+      agentTaskType: "vibe",
+      chatTriggerType: "MANUAL",
+      conversationId: randomUUID(),
+      currentMessage: {
+        userInputMessage: {
+          content: "Reply with OK only.",
+          modelId,
+          origin: "KIRO_CLI",
+        },
+      },
+    },
+    inferenceConfig: { maxTokens: 16, temperature: 0 },
+  };
+}
+
+/** Run an explicit, minimal inference request without sending the active Pi conversation. */
+export async function probeKiroRuntime(input: {
+  auth: KiroRequestAuth;
+  modelId: string;
+  signal?: AbortSignal;
+  fetch?: FetchFunction;
+  timeoutMs?: number;
+}): Promise<InferenceProbe> {
+  const startedAt = Date.now();
+  let status = 0;
+  let firstEventMs: number | undefined;
+  let receivedOutput = false;
+
+  try {
+    for await (const event of generateAssistantResponse({
+      auth: input.auth,
+      payload: inferenceProbePayload(input.modelId),
+      signal: input.signal,
+      fetch: input.fetch,
+      timeoutMs: input.timeoutMs,
+      onResponse: (response) => {
+        status = response.status;
+      },
+    })) {
+      firstEventMs ??= elapsedMilliseconds(startedAt);
+      if (
+        event.type === "assistantResponseEvent" &&
+        typeof event.payload.content === "string" &&
+        event.payload.content.length > 0
+      ) {
+        receivedOutput = true;
+      }
+    }
+    if (!receivedOutput) throw new Error("Kiro Runtime probe returned no assistant text output");
+    return {
+      ok: true,
+      endpoint: endpoint(input.auth),
+      modelId: input.modelId,
+      status,
+      receivedOutput,
+      firstEventMs,
+      durationMs: elapsedMilliseconds(startedAt),
+    };
+  } catch (error) {
+    if (input.signal?.aborted) throw input.signal.reason ?? error;
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      endpoint: endpoint(input.auth),
+      modelId: input.modelId,
+      status: status || Number(message.match(/HTTP (\d+)/)?.[1] ?? 0),
+      receivedOutput,
+      firstEventMs,
+      durationMs: elapsedMilliseconds(startedAt),
+      error: message,
+    };
+  }
 }
 
 export async function probeKiro(input: {
@@ -271,6 +365,7 @@ export async function probeKiro(input: {
   signal?: AbortSignal;
   fetch?: FetchFunction;
 }): Promise<RuntimeProbe> {
+  const startedAt = Date.now();
   try {
     const models = await discoverModels(input);
     return {
@@ -278,6 +373,7 @@ export async function probeKiro(input: {
       endpoint: endpoint(input.auth),
       status: 200,
       modelCount: models.length,
+      durationMs: elapsedMilliseconds(startedAt),
     };
   } catch (error) {
     if (input.signal?.aborted) throw input.signal.reason ?? error;
@@ -288,6 +384,7 @@ export async function probeKiro(input: {
       endpoint: endpoint(input.auth),
       status,
       modelCount: 0,
+      durationMs: elapsedMilliseconds(startedAt),
       error: message,
     };
   }

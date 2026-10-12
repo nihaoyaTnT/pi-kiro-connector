@@ -16,6 +16,7 @@ All notable changes to this project will be documented here. This project follow
 - Pi session-aware upstream conversation IDs and ordered assembly of interleaved tool calls with bounded pending input.
 - Streaming text, reasoning, usage, tool calls, cancellation, and sanitized errors.
 - Native regional model discovery with Pi model-store caching and offline fallbacks.
+- Opt-in minimal inference health checks with latency reporting and explicit usage consent.
 - `/kiro-status`, `/kiro-use`, and the `kiro_connection` agent tool.
 - English and Simplified Chinese documentation, security guidance, tests, and CI.
 - Node.js 22.19.0 and 24 validation coverage, matching Pi 0.84.4's runtime requirement.

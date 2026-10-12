@@ -13,7 +13,7 @@ A [Pi](https://pi.dev) package that adds native Kiro Runtime access with model d
 - Provides a built-in fallback catalog for offline startup
 - Supports AWS Builder ID and AWS IAM Identity Center (company SSO) sign-in with automatic token refresh through `/login kiro`
 - Supports Kiro API keys through `/login kiro` or `KIRO_API_KEY`
-- Adds `/kiro-status`, `/kiro-use`, and the LLM-callable `kiro_connection` tool
+- Adds `/kiro-status`, an opt-in inference health probe, `/kiro-use`, and the LLM-callable `kiro_connection` tool
 - Never returns or intentionally logs credentials
 - Has no runtime npm dependencies beyond Pi's package peers
 
@@ -113,8 +113,11 @@ Reload Pi after installation, then check and select the provider:
 ```text
 /reload
 /kiro-status
+/kiro-status --deep claude-haiku-4.5
 /kiro-use claude-sonnet-4.6
 ```
+
+`/kiro-status` checks authentication and the model catalog without running inference. `/kiro-status --deep [model-id]` additionally sends the fixed prompt `Reply with OK only.` as a minimal Runtime probe. In UI modes Pi asks for confirmation first because the probe can consume a small amount of Kiro usage. It never sends the active conversation, system prompt, tools, or images. When no model is specified, the connector prefers `claude-haiku-4.5`, then `auto`, then the first registered Kiro model.
 
 Or select a model at startup:
 
@@ -124,11 +127,12 @@ pi --provider kiro --model claude-sonnet-4.6
 
 The `kiro_connection` tool supports:
 
-- `status` — check authentication, regional connectivity, and model discovery
+- `status` — check authentication, regional connectivity, model discovery, and catalog latency without inference
+- `probe` — run the minimal inference probe; requires `confirmUsage: true` after explicit user approval
 - `models` — list registered Kiro model IDs
 - `use` — switch to a Kiro model
 
-The status command and tool report only the credential source, endpoint, status, and model count. They do not return API keys or OAuth tokens.
+Status and probe results report only the credential source, endpoint, HTTP status, model metadata, and latency. They do not return API keys, OAuth tokens, or model output.
 
 ## How it works
 
